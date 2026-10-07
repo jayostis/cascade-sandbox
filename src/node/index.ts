@@ -31,3 +31,19 @@ export async function loadHospital(
   }
   return { hospital, patients };
 }
+
+/** Every hospital in `data/`, by its folder's name, in order. */
+export async function loadHospitals(): Promise<
+  Map<string, { hospital: Hospital; patients: Record<string, Bundle> }>
+> {
+  const hospitals = new Map<
+    string,
+    { hospital: Hospital; patients: Record<string, Bundle> }
+  >();
+  for (const entry of (await readdir(DATA, { withFileTypes: true })).sort(
+    (a, b) => (a.name < b.name ? -1 : 1),
+  ))
+    if (entry.isDirectory())
+      hospitals.set(entry.name, await loadHospital(entry.name));
+  return hospitals;
+}
