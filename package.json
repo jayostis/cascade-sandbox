@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Pretend SMART on FHIR hospitals, as functions from a Request to a Response, for testing connections with no account and no network.",
   "license": "Apache-2.0",
+  "scripts": {
+    "synthea": "tsc -b && node dist/src/node/synthea-cli.js"
+  },
   "exports": {
     ".": "./dist/src/index.js",
     "./node": "./dist/src/node/index.js"

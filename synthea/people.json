@@ -1,0 +1,14 @@
+[
+  {
+    "synthea": "18a08f42-e19d-3072-8737-90a26ea0cb6d",
+    "hospitals": ["cascade-north", "cascade-south"]
+  },
+  {
+    "synthea": "e83719b7-d3c2-1460-48b5-f91656bdff61",
+    "hospitals": ["cascade-north"]
+  },
+  {
+    "synthea": "6ef86d46-93b8-46b0-4c20-c04e76e5a221",
+    "hospitals": ["cascade-south"]
+  }
+]

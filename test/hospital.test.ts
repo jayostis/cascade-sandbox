@@ -468,7 +468,7 @@ test("each bad request is refused as the protocol says", async () => {
     [
       "a type not served",
       hospital,
-      `Procedure?patient=${A_NORTH}`,
+      `DocumentReference?patient=${A_NORTH}`,
       token,
       404,
       "not-found",

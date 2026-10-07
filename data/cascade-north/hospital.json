@@ -10,7 +10,8 @@
     "Encounter",
     "Immunization",
     "MedicationRequest",
-    "Observation"
+    "Observation",
+    "Procedure"
   ],
   "hiddenFromSearch": ["Encounter/enc-3"]
 }
