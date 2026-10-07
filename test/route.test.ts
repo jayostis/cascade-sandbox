@@ -7,7 +7,7 @@ const APP = "http://127.0.0.1:8080/connect/";
 const AUTHORIZE = `${APP}demo-hospitals/`;
 
 test("demo requests are told from their URL alone, and each is answered by the hospital it names, or by the fallback", async () => {
-  const hospitals = [...(await loadHospitals()).values()];
+  const hospitals = await loadHospitals();
   const fallen: string[] = [];
   const fallback = (async (input: RequestInfo | URL) => {
     fallen.push(String(input instanceof Request ? input.url : input));

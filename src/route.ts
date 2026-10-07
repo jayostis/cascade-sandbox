@@ -132,10 +132,10 @@ export function hospitalId(options: DemoHospitalOptions): string {
 
 /** A `fetch` that sends the demo hospitals' requests to them, and every other to `fallback`. */
 export function demoFetch(
-  hospitals: readonly DemoHospitalOptions[],
+  hospitals: Iterable<DemoHospitalOptions>,
   options: RouteOptions & { readonly fallback?: typeof fetch } = {},
 ): typeof fetch {
-  const byId = new Map(hospitals.map((each) => [hospitalId(each), each]));
+  const byId = new Map([...hospitals].map((each) => [hospitalId(each), each]));
   const route = demoRouter((id) => Promise.resolve(byId.get(id)), options);
   const fallback = options.fallback ?? globalThis.fetch.bind(globalThis);
   return (input, init) =>
