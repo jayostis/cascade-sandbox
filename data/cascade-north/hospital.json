@@ -1,0 +1,16 @@
+{
+  "name": "Cascade North Demo Hospital",
+  "fhirBase": "https://cascade-north.demo.invalid/fhir",
+  "pageSize": 2,
+  "key": "cascade-north-demo-key-public-not-a-secret",
+  "types": [
+    "Patient",
+    "AllergyIntolerance",
+    "Condition",
+    "Encounter",
+    "Immunization",
+    "MedicationRequest",
+    "Observation"
+  ],
+  "hiddenFromSearch": ["Encounter/enc-3"]
+}

@@ -1,0 +1,59 @@
+# @cascade-runtime/demo-hospital
+
+Pretend hospitals that speak SMART on FHIR, for developing and testing an app's
+connection to a hospital with no account, no vendor's sign-in page and no
+network.
+
+A hospital is one function, `(request: Request) => Promise<Response>`, made from
+that hospital's data and answering at its FHIR base URL: discovery
+(`.well-known/smart-configuration`), the authorize endpoint (a sign-in page, or
+an automatic approval), the token endpoint, and FHIR reads and searches by
+patient. It uses only `Request`, `Response`, `URL` and WebCrypto, so it runs
+unchanged in Node and in a browser.
+
+```ts
+import { demoHospital } from "@cascade-runtime/demo-hospital";
+import { loadHospital } from "@cascade-runtime/demo-hospital/node";
+
+const north = demoHospital(await loadHospital("cascade-north"));
+const response = await north(
+  new Request(
+    "https://cascade-north.demo.invalid/fhir/.well-known/smart-configuration",
+  ),
+);
+```
+
+Options: `hospital` and `patients` (what `loadHospital` returns),
+`authorizeUrl` (the sign-in page's address, by default `<base>/authorize`),
+`autoApprove` (a patient id: sign in as them with no page) and `now` (a clock).
+
+## Not security
+
+This hospital is pretend, and nothing about it protects anything:
+
+- codes and tokens are signed notes, HMAC-SHA256 under a key that is in this
+  package's data for anyone to read;
+- a code can be exchanged more than once, and nothing can be revoked;
+- any client ID is accepted, and the redirect URI is never checked against a
+  registration.
+
+That is what lets it keep no state between requests: a service worker that
+restarts in the middle of a sign-in loses nothing.
+
+## The data
+
+`data/` holds what each hospital knows, as files with no code:
+
+```
+data/
+  cascade-north/
+    hospital.json        name, FHIR base, page size, key, types, references left out of searches
+    patients/<id>.json   one patient's record there, as a FHIR R4 Bundle
+  cascade-south/
+    ...
+```
+
+Every name and record is synthetic, written by hand. Rowan Ellery Marsh is a
+patient at both hospitals, under a different patient id and different record
+ids at each; Tobias Fenn is at North only. North leaves one of Rowan's
+encounters out of its searches, and serves it only when read by id.

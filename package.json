@@ -1,0 +1,12 @@
+{
+  "name": "@cascade-runtime/demo-hospital",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pretend SMART on FHIR hospitals, as functions from a Request to a Response, for testing connections with no account and no network.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./dist/src/index.js",
+    "./node": "./dist/src/node/index.js"
+  }
+}

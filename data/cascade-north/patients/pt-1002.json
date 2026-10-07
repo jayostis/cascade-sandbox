@@ -1,0 +1,139 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "pt-1002",
+        "identifier": [
+          {
+            "system": "https://cascade-north.demo.invalid/mrn",
+            "value": "N-0058311"
+          }
+        ],
+        "name": [{ "family": "Fenn", "given": ["Tobias"] }],
+        "gender": "male",
+        "birthDate": "1958-11-03",
+        "address": [
+          { "city": "Alderbrook", "state": "WA", "postalCode": "98000" }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "enc-4",
+        "status": "finished",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "AMB",
+          "display": "ambulatory"
+        },
+        "type": [{ "text": "Diabetes follow-up" }],
+        "subject": { "reference": "Patient/pt-1002" },
+        "period": {
+          "start": "2025-04-22T10:30:00-07:00",
+          "end": "2025-04-22T11:00:00-07:00"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-3",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "44054006",
+              "display": "Diabetes mellitus type 2"
+            }
+          ],
+          "text": "Type 2 diabetes"
+        },
+        "subject": { "reference": "Patient/pt-1002" },
+        "encounter": { "reference": "Encounter/enc-4" },
+        "onsetDateTime": "2019-08-14"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-3",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "860975",
+              "display": "24 HR metformin hydrochloride 500 MG Extended Release Oral Tablet"
+            }
+          ],
+          "text": "Metformin ER 500 mg tablet"
+        },
+        "subject": { "reference": "Patient/pt-1002" },
+        "encounter": { "reference": "Encounter/enc-4" },
+        "authoredOn": "2025-04-22",
+        "dosageInstruction": [
+          { "text": "Take 1 tablet by mouth daily with the evening meal" }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "lab-4",
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "laboratory"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "4548-4",
+              "display": "Hemoglobin A1c/Hemoglobin.total in Blood"
+            }
+          ],
+          "text": "Hemoglobin A1c"
+        },
+        "subject": { "reference": "Patient/pt-1002" },
+        "encounter": { "reference": "Encounter/enc-4" },
+        "effectiveDateTime": "2025-04-22T10:45:00-07:00",
+        "valueQuantity": {
+          "value": 7.1,
+          "unit": "%",
+          "system": "http://unitsofmeasure.org",
+          "code": "%"
+        }
+      }
+    }
+  ]
+}

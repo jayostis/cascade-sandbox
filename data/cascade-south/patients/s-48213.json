@@ -1,0 +1,193 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "s-48213",
+        "identifier": [
+          {
+            "system": "https://cascade-south.demo.invalid/mrn",
+            "value": "S-7730190"
+          }
+        ],
+        "name": [{ "family": "Marsh", "given": ["Rowan", "Ellery"] }],
+        "gender": "female",
+        "birthDate": "1979-04-12",
+        "address": [
+          { "city": "Alderbrook", "state": "WA", "postalCode": "98000" }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "e-5501",
+        "status": "finished",
+        "class": {
+          "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+          "code": "AMB",
+          "display": "ambulatory"
+        },
+        "type": [{ "text": "Cardiology consultation" }],
+        "subject": { "reference": "Patient/s-48213" },
+        "period": {
+          "start": "2025-08-05T13:00:00-07:00",
+          "end": "2025-08-05T13:50:00-07:00"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "c-7702",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/condition-category",
+                "code": "problem-list-item"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "59621000",
+              "display": "Essential hypertension"
+            }
+          ],
+          "text": "Hypertension"
+        },
+        "subject": { "reference": "Patient/s-48213" },
+        "encounter": { "reference": "Encounter/e-5501" },
+        "onsetDateTime": "2025-02-10"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "m-9014",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "314076",
+              "display": "lisinopril 10 MG Oral Tablet"
+            }
+          ],
+          "text": "Lisinopril 10 mg oral tablet"
+        },
+        "subject": { "reference": "Patient/s-48213" },
+        "encounter": { "reference": "Encounter/e-5501" },
+        "authoredOn": "2025-08-05",
+        "dosageInstruction": [{ "text": "1 tablet orally once a day" }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Immunization",
+        "id": "i-3120",
+        "status": "completed",
+        "vaccineCode": {
+          "coding": [
+            {
+              "system": "http://hl7.org/fhir/sid/cvx",
+              "code": "115",
+              "display": "Tdap"
+            }
+          ],
+          "text": "Tdap"
+        },
+        "patient": { "reference": "Patient/s-48213" },
+        "occurrenceDateTime": "2023-05-30",
+        "primarySource": true
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "o-6610",
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "laboratory"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "2160-0",
+              "display": "Creatinine [Mass/volume] in Serum or Plasma"
+            }
+          ],
+          "text": "Creatinine"
+        },
+        "subject": { "reference": "Patient/s-48213" },
+        "encounter": { "reference": "Encounter/e-5501" },
+        "effectiveDateTime": "2025-08-05T13:30:00-07:00",
+        "valueQuantity": {
+          "value": 0.8,
+          "unit": "mg/dL",
+          "system": "http://unitsofmeasure.org",
+          "code": "mg/dL"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "o-6611",
+        "status": "final",
+        "category": [
+          {
+            "coding": [
+              {
+                "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                "code": "vital-signs"
+              }
+            ]
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://loinc.org",
+              "code": "8867-4",
+              "display": "Heart rate"
+            }
+          ],
+          "text": "Heart rate"
+        },
+        "subject": { "reference": "Patient/s-48213" },
+        "encounter": { "reference": "Encounter/e-5501" },
+        "effectiveDateTime": "2025-08-05T13:05:00-07:00",
+        "valueQuantity": {
+          "value": 72,
+          "unit": "beats/minute",
+          "system": "http://unitsofmeasure.org",
+          "code": "/min"
+        }
+      }
+    }
+  ]
+}
