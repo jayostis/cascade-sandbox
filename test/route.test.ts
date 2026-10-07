@@ -68,34 +68,33 @@ test("demo requests are told from their URL alone, and each is answered by the h
         /Retry-After/,
         url,
       );
+      const authorize = discovered.authorization_endpoint;
+      const page = await routed(
+        `${authorize}?${new URLSearchParams({
+          response_type: "code",
+          client_id: "test-app",
+          redirect_uri: `${APP}signed-in.html`,
+          scope: "launch/patient",
+          state: "s",
+          aud: answer,
+          code_challenge: "c",
+          code_challenge_method: "S256",
+        })}`,
+      );
+      assert.equal(page.status, 200, authorize);
+      const named = hospitals.find(
+        ({ hospital }) => hospital.fhirBase === answer,
+      );
+      assert.ok(named, url);
+      assert.match(
+        await page.text(),
+        new RegExp(named.hospital.name),
+        authorize,
+      );
     } else assert.equal(await response.text(), answer, url);
   }
   assert.deepEqual(fallen, [
     `${APP}index.html`,
     "https://example.org/fhir/metadata",
   ]);
-});
-
-test("the authorize URL discovery names is the one the router answers", async () => {
-  const hospitals = [...(await loadHospitals()).values()];
-  const routed = demoFetch(hospitals, { authorizeBase: AUTHORIZE });
-  for (const { hospital } of hospitals) {
-    const { authorization_endpoint: authorize } = (await (
-      await routed(`${hospital.fhirBase}/.well-known/smart-configuration`)
-    ).json()) as { authorization_endpoint: string };
-    const page = await routed(
-      `${authorize}?${new URLSearchParams({
-        response_type: "code",
-        client_id: "test-app",
-        redirect_uri: `${APP}signed-in.html`,
-        scope: "launch/patient",
-        state: "s",
-        aud: hospital.fhirBase,
-        code_challenge: "c",
-        code_challenge_method: "S256",
-      })}`,
-    );
-    assert.equal(page.status, 200, authorize);
-    assert.match(await page.text(), new RegExp(hospital.name), authorize);
-  }
 });
