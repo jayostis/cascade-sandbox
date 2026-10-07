@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   type DemoHospital,
@@ -160,13 +163,14 @@ async function pullEverything(
   base: string,
   patient: string,
   token: string,
+  asked = patient,
 ) {
   const returned: string[] = [];
   const searched = new Set<string>();
   const paging: Record<string, boolean[]> = {};
   for (const search of SEARCHES) {
     const [type, rest] = search.split("&");
-    const query = `${base}/${type}?patient=${patient}${rest ? `&${rest}` : ""}`;
+    const query = `${base}/${type}?patient=${asked}${rest ? `&${rest}` : ""}`;
     const { pages, nexts } = await searchAll(hospital, query, token);
     paging[search] = nexts;
     for (const page of pages) {
@@ -225,11 +229,34 @@ test("a client walks the whole protocol for patient A at North", async () => {
   assert.ok(returned.every((record) => !elsewhere.includes(record)));
   assert.ok(!searched.has(leftOut ?? ""));
   assert.deepEqual(paging["Observation&category=laboratory"], [true, false]);
+
+  const total = async (category: string) => {
+    const query = new URLSearchParams({ patient: A_NORTH, category });
+    const response = await get(another, `${base}/Observation?${query}`, token);
+    return (await response.json()).total;
+  };
+  const labs = await total("laboratory");
+  assert.equal(
+    await total(
+      "http://terminology.hl7.org/CodeSystem/observation-category|laboratory",
+    ),
+    labs,
+  );
+  assert.equal(
+    await total("laboratory,vital-signs"),
+    labs + (await total("vital-signs")),
+  );
 });
 
 test("two hospitals: A at South is South's patient, and North's token is refused there", async () => {
   const { hospital, token } = await signIn(south, A_SOUTH);
-  const { returned } = await pullEverything(hospital, SOUTH, A_SOUTH, token);
+  const { returned } = await pullEverything(
+    hospital,
+    SOUTH,
+    A_SOUTH,
+    token,
+    `Patient/${A_SOUTH}`,
+  );
   assert.deepEqual(
     [...returned].sort(),
     recordsOf(south.patients[A_SOUTH] ?? {}).sort(),
@@ -300,9 +327,24 @@ test("each bad request is refused as the protocol says", async () => {
     ],
     ["a wrong aud", { aud: SOUTH }, 302, "invalid_request"],
     ["no redirect_uri", { redirect_uri: undefined }, 400, ""],
+    ["no client_id", { client_id: undefined }, 400, ""],
+    [
+      "a patient not at this hospital",
+      { decision: "allow", patient: "constructor" },
+      302,
+      "access_denied",
+    ],
   ];
   for (const [name, overrides, status, error] of authorizeRows) {
-    const response = await authorize(hospital, NORTH, overrides);
+    const response =
+      overrides.decision === undefined
+        ? await authorize(hospital, NORTH, overrides)
+        : await hospital(
+            new Request(`${NORTH}/authorize`, {
+              method: "POST",
+              body: new URLSearchParams(authorizeQuery(NORTH, overrides)),
+            }),
+          );
     assert.equal(response.status, status, name);
     if (status === 302) {
       const back = redirected(response);
@@ -431,6 +473,14 @@ test("each bad request is refused as the protocol says", async () => {
       404,
       "not-found",
     ],
+    [
+      "a Patient search",
+      hospital,
+      `Patient?patient=${A_NORTH}`,
+      token,
+      404,
+      "not-found",
+    ],
   ];
   for (const [name, at, path, bearer, status, issue] of fhirRows) {
     const response = await get(at, `${NORTH}/${path}`, bearer);
@@ -451,4 +501,38 @@ test("each bad request is refused as the protocol says", async () => {
       );
     }
   }
+
+  for (const [method, path, allowed] of [
+    ["GET", "token", "POST"],
+    ["POST", ".well-known/smart-configuration", "GET"],
+  ] as const) {
+    const response = await hospital(
+      new Request(`${NORTH}/${path}`, { method }),
+    );
+    assert.equal(response.status, 405, path);
+    assert.equal(response.headers.get("Allow"), allowed, path);
+  }
+
+  assert.throws(() => demoHospital({ ...north, autoApprove: "toString" }));
+  const keyless = demoHospital({
+    ...north,
+    hospital: { ...north.hospital, key: "" },
+  });
+  await assert.rejects(
+    get(keyless, `${NORTH}/Condition?patient=${A_NORTH}`, token),
+  );
+});
+
+test("a patient file must hold the patient it is named for", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
+  await mkdir(join(folder, "patients"));
+  await writeFile(
+    join(folder, "hospital.json"),
+    JSON.stringify(north.hospital),
+  );
+  await writeFile(
+    join(folder, "patients", "rowan.json"),
+    JSON.stringify(north.patients[A_NORTH]),
+  );
+  await assert.rejects(loadHospital(folder), /rowan/);
 });

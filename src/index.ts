@@ -44,16 +44,18 @@ const AUTHORIZE_PARAMETERS = [
   "code_challenge_method",
 ];
 const FHIR_JSON = "application/fhir+json";
+const NO_STORE = { "Cache-Control": "no-store" };
 
 export function demoHospital(options: DemoHospitalOptions): DemoHospital {
-  const { hospital, patients } = options;
+  const { hospital } = options;
+  const patients = new Map(Object.entries(options.patients));
   const base = hospital.fhirBase.replace(/\/$/, "");
   const authorizeUrl = options.authorizeUrl ?? `${base}/authorize`;
   const tokenUrl = `${base}/token`;
   const now = options.now ?? (() => new Date());
   const signer = new Signer(hospital.key);
   const hidden = new Set(hospital.hiddenFromSearch);
-  if (options.autoApprove !== undefined && !patients[options.autoApprove]) {
+  if (options.autoApprove !== undefined && !patients.has(options.autoApprove)) {
     throw new Error(
       `${hospital.name} has no patient ${options.autoApprove} to auto-approve`,
     );
@@ -66,12 +68,12 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     form: boolean,
   ): Promise<Response> {
     const redirect = parseUrl(parameters.get("redirect_uri"));
-    if (!redirect) {
+    if (!redirect || !parameters.get("client_id")) {
       return html(
         400,
         page(
           hospital.name,
-          "<p>This sign-in request has no valid <code>redirect_uri</code>, so there is nowhere to send you back to.</p>",
+          "<p>This sign-in request has no valid <code>redirect_uri</code> or no <code>client_id</code>, so it cannot be answered by sending you back to the app.</p>",
         ),
       );
     }
@@ -91,7 +93,6 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       return back({ error: "unsupported_response_type" });
     }
     if (
-      !parameters.get("client_id") ||
       !parameters.get("code_challenge") ||
       parameters.get("code_challenge_method") !== "S256" ||
       (parameters.get("aud") ?? "").replace(/\/$/, "") !== base
@@ -108,7 +109,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       if (parameters.get("decision") !== "allow" || !patient) {
         return back({ error: "invalid_request" });
       }
-      if (!patients[patient]) return back({ error: "access_denied" });
+      if (!patients.has(patient)) return back({ error: "access_denied" });
     } else if (options.autoApprove !== undefined) {
       patient = options.autoApprove;
     } else {
@@ -136,7 +137,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
           `<input type="hidden" name="${name}" value="${escape(parameters.get(name) ?? "")}">`,
       )
       .join("\n      ");
-    const choices = Object.entries(patients)
+    const choices = [...patients]
       .map(
         ([id, bundle], index) =>
           `<label><input type="radio" name="patient" value="${escape(id)}"${index === 0 ? " checked" : ""}> ${escape(patientName(bundle, id))}</label>`,
@@ -164,7 +165,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     );
   }
 
-  async function token(form: URLSearchParams): Promise<Response> {
+  async function exchange(form: URLSearchParams): Promise<Response> {
     const grantType = form.get("grant_type");
     if (!grantType) return tokenError("invalid_request");
     if (grantType !== "authorization_code") {
@@ -198,7 +199,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       scope,
       exp: seconds() + TOKEN_LIFETIME,
     });
-    return json(200, {
+    return json(200, NO_STORE, {
       access_token: accessToken,
       token_type: "Bearer",
       expires_in: TOKEN_LIFETIME,
@@ -218,7 +219,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       typeof note.exp !== "number" ||
       note.exp <= seconds() ||
       typeof note.patient !== "string" ||
-      !patients[note.patient]
+      !patients.has(note.patient)
     ) {
       return outcome(401, "login", "A valid bearer token is required.", {
         "WWW-Authenticate": "Bearer",
@@ -240,8 +241,15 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
         : outcome(404, "not-found", `No ${type}/${id}.`);
     }
 
+    if (type === "Patient") {
+      return outcome(
+        404,
+        "not-found",
+        "A Patient is read by id, not searched.",
+      );
+    }
     const query = url.searchParams;
-    const asked = query.get("patient");
+    const asked = patientId(query.get("patient"), base);
     if (!asked) {
       return outcome(400, "required", "A search needs a patient.");
     }
@@ -259,11 +267,20 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       );
     }
     const category = query.get("category");
+    const wanted = category?.split(",").map(token);
     const matches = records.filter(
       (resource) =>
         resource.resourceType === type &&
         !hidden.has(`${type}/${resource.id}`) &&
-        (category === null || categories(resource).includes(category)),
+        (wanted === undefined ||
+          categories(resource).some((coding) =>
+            wanted.some(
+              (want) =>
+                want.code === coding.code &&
+                (want.system === undefined ||
+                  want.system === (coding.system ?? "")),
+            ),
+          )),
     );
     const link = (offset: number) => {
       const next = new URL(`${base}/${type}`);
@@ -291,7 +308,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
   }
 
   function recordsOf(patient: string): Resource[] {
-    return (patients[patient]?.entry ?? []).map((entry) => entry.resource);
+    return (patients.get(patient)?.entry ?? []).map((entry) => entry.resource);
   }
 
   return async (request) => {
@@ -304,7 +321,8 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       }
     }
     if (address === `${base}/.well-known/smart-configuration`) {
-      return json(200, {
+      if (request.method !== "GET") return notAllowed("GET");
+      return json(200, NO_STORE, {
         issuer: base,
         authorization_endpoint: authorizeUrl,
         token_endpoint: tokenUrl,
@@ -321,8 +339,9 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
         ],
       });
     }
-    if (address === tokenUrl && request.method === "POST") {
-      return token(new URLSearchParams(await request.text()));
+    if (address === tokenUrl) {
+      if (request.method !== "POST") return notAllowed("POST");
+      return exchange(new URLSearchParams(await request.text()));
     }
     if (address.startsWith(`${base}/`) && request.method === "GET") {
       return fhir(request, url);
@@ -360,14 +379,24 @@ function position(page: string): number | undefined {
   }
 }
 
-function categories(resource: Resource): string[] {
+interface Coding {
+  system?: string;
+  code?: string;
+}
+
+function categories(resource: Resource): Coding[] {
   const category = resource.category;
   if (!Array.isArray(category)) return [];
-  return category.flatMap((concept: { coding?: { code?: string }[] }) =>
-    (concept.coding ?? []).flatMap((coding) =>
-      coding.code ? [coding.code] : [],
-    ),
+  return category.flatMap(
+    (concept: { coding?: Coding[] }) => concept.coding ?? [],
   );
+}
+
+function token(text: string): { system?: string; code: string } {
+  const bar = text.indexOf("|");
+  return bar === -1
+    ? { code: text }
+    : { system: text.slice(0, bar), code: text.slice(bar + 1) };
 }
 
 function patientName(bundle: Bundle, id: string): string {
@@ -410,25 +439,45 @@ function html(status: number, body: string): Response {
   });
 }
 
-function json(status: number, body: unknown): Response {
+function json(
+  status: number,
+  headers: Record<string, string>,
+  body: unknown,
+): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store",
-    },
+    headers: { "Content-Type": "application/json", ...headers },
   });
+}
+
+function fhirJson(
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Response {
+  return json(status, { "Content-Type": FHIR_JSON, ...headers }, body);
 }
 
 function tokenError(error: string): Response {
-  return json(400, { error });
+  return json(400, NO_STORE, { error });
 }
 
-function fhirJson(status: number, body: unknown, headers = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": FHIR_JSON, ...headers },
-  });
+function notAllowed(allow: string): Response {
+  return outcome(
+    405,
+    "not-supported",
+    "This address does not take that method.",
+    {
+      Allow: allow,
+    },
+  );
+}
+
+function patientId(reference: string | null, base: string): string | null {
+  for (const prefix of [`${base}/Patient/`, "Patient/"]) {
+    if (reference?.startsWith(prefix)) return reference.slice(prefix.length);
+  }
+  return reference;
 }
 
 function outcome(

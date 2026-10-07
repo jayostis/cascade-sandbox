@@ -15,9 +15,19 @@ export async function loadHospital(
   const patients: Record<string, Bundle> = {};
   for (const file of (await readdir(join(root, "patients"))).sort()) {
     if (!file.endsWith(".json")) continue;
-    patients[file.slice(0, -".json".length)] = JSON.parse(
+    const id = file.slice(0, -".json".length);
+    const bundle = JSON.parse(
       await readFile(join(root, "patients", file), "utf8"),
     ) as Bundle;
+    const held = bundle.entry?.find(
+      (entry) => entry.resource.resourceType === "Patient",
+    )?.resource.id;
+    if (held !== id) {
+      throw new Error(
+        `patients/${file} holds Patient ${held ?? "(none)"}, not ${id}`,
+      );
+    }
+    patients[id] = bundle;
   }
   return { hospital, patients };
 }

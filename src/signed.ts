@@ -24,16 +24,22 @@ export async function sha256(text: string): Promise<string> {
 }
 
 export class Signer {
-  readonly #key: Promise<CryptoKey>;
+  readonly #secret: string;
+  #imported?: Promise<CryptoKey>;
 
   constructor(secret: string) {
-    this.#key = crypto.subtle.importKey(
+    this.#secret = secret;
+  }
+
+  get #key(): Promise<CryptoKey> {
+    this.#imported ??= crypto.subtle.importKey(
       "raw",
-      encoder.encode(secret),
+      encoder.encode(this.#secret),
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign", "verify"],
     );
+    return this.#imported;
   }
 
   async sign(note: object): Promise<string> {
