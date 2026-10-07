@@ -13,14 +13,14 @@ use or test the demo hospitals. This folder says how to make it again.
 
 - `synthea.properties`: Synthea's settings. One thread, so a run is
   reproducible; ten years of history; FHIR R4 only, plus the hospital and
-  practitioner files, which are read to know what to remove and never
-  committed.
+  practitioner files, which are read to list the real provider details in
+  `removed.json` and never committed.
 - `people.json`: who is chosen, and at which hospitals. A person at two
   hospitals is split by provider: the provider with the most encounters goes to
   the first.
-- `removed.json`: the real provider names, street addresses and phone numbers
-  the chosen people's records named, and which the post-processing removed. The
-  data test checks that none of them is left in `data/`.
+- `removed.json`: every real provider name, street address and phone number in
+  Synthea's hospital and practitioner files, whether or not the chosen people's
+  records named it. The data test checks that none of them is left in `data/`.
 
 ## Regenerating
 
@@ -46,13 +46,12 @@ no change.
 
 `src/node/synthea.ts`, for each chosen person:
 
-1. keeps Patient, AllergyIntolerance, Condition, Encounter, Immunization,
-   MedicationRequest, Observation and Procedure, and drops the rest, Claim and
-   ExplanationOfBenefit among them;
+1. keeps the types each hospital's `hospital.json` lists, and drops the rest,
+   Claim and ExplanationOfBenefit among them;
 2. keeps only `laboratory` and `vital-signs` Observations;
-3. splits a person at two hospitals by provider; active Conditions, active
-   MedicationRequests and allergies go to both, as a hospital reconciles them
-   at intake;
+3. splits a person at two hospitals by provider, and refuses a third; active
+   Conditions, active MedicationRequests and allergies go to both, as a
+   hospital reconciles them at intake;
 4. names each record `syn-` and 16 hex digits of SHA-256 of the hospital's
    folder and Synthea's id, so each hospital has its own ids;
 5. turns `urn:uuid:` references into `Type/id`, removes those to records not

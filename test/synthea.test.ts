@@ -1,17 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Bundle, Hospital, Resource } from "../src/index.js";
-import { fromSynthea } from "../src/node/synthea.js";
+import { fromSynthea, providerDetails } from "../src/node/synthea.js";
 
-const hospital = (folder: string, name: string) => ({
+const TYPES = ["Patient", "Condition", "Encounter", "Observation"];
+const hospital = (folder: string, name: string, types = TYPES) => ({
   folder,
   hospital: {
     name,
     fhirBase: `https://${folder}.demo.invalid/fhir`,
+    types,
   } as Hospital,
 });
-const NORTH = hospital("cascade-north", "Cascade North Demo Hospital");
+const NORTH = hospital("cascade-north", "Cascade North Demo Hospital", [
+  ...TYPES,
+  "Procedure",
+]);
 const SOUTH = hospital("cascade-south", "Cascade South Demo Hospital");
+const MAIDEN_NAME =
+  "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName";
 
 const REAL = "Real Facility Medical Center";
 const provider = (id: string) => ({
@@ -42,6 +49,15 @@ const resources = [
     id: "p",
     name: [{ given: ["Ann12"], family: "Lee34" }],
     identifier: [{ value: "999-12-3456" }],
+    extension: [
+      { url: "https://example.org/code", valueCode: "A1" },
+      { url: MAIDEN_NAME, valueString: "Bea56 Lee34" },
+    ],
+  },
+  {
+    resourceType: "Procedure",
+    id: "proc",
+    subject: { reference: "urn:uuid:p" },
   },
   encounter("e1", "busy"),
   encounter("e2", "busy"),
@@ -80,12 +96,25 @@ const providers = [
     identifier: [{ value: "busy" }],
     name: REAL,
     address: [{ line: ["1 Real Street"] }],
-    telecom: [{ value: "555-0100" }],
+    telecom: [{ system: "phone", value: "555-0100" }],
+  },
+  {
+    resourceType: "Location",
+    id: "unseen",
+    identifier: [{ value: "unseen" }],
+    name: "Unseen Real Clinic",
+  },
+  {
+    resourceType: "Practitioner",
+    id: "dr",
+    name: [{ family: "Heaney114" }],
+    address: [{ line: ["2 Real Avenue"] }],
+    telecom: [{ system: "email", value: "dr@example.com" }],
   },
 ] as Resource[];
 
 test("a Synthea person becomes each hospital's own patient, trimmed and renamed", () => {
-  const { files, removed } = fromSynthea(bundle, [NORTH, SOUTH], providers);
+  const files = fromSynthea(bundle, [NORTH, SOUTH]);
   const [north, south] = files.map((file) =>
     (file.bundle.entry ?? []).map((entry) => entry.resource),
   ) as [Resource[], Resource[]];
@@ -104,6 +133,8 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
   assert.equal(of(north, "Encounter").length, 2);
   assert.equal(of(south, "Encounter").length, 1);
   assert.equal(of(north, "Observation").length, 0);
+  assert.equal(of(north, "Procedure").length, 1);
+  assert.equal(of(south, "Procedure").length, 0);
   assert.deepEqual(
     of(south, "Observation").map((o) => o.encounter),
     [{ reference: `Encounter/${of(south, "Encounter")[0]!.id}` }],
@@ -118,6 +149,10 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
   assert.equal(of(south, "Encounter")[0]!.identifier, undefined);
   const [patient] = of(south, "Patient");
   assert.deepEqual(patient!.name, [{ given: ["Ann"], family: "Lee" }]);
+  assert.deepEqual(patient!.extension, [
+    { url: "https://example.org/code", valueCode: "A1" },
+    { url: MAIDEN_NAME, valueString: "Bea Lee" },
+  ]);
   assert.equal(patient!.id, files[1]!.id);
   assert.deepEqual(patient!.identifier, [
     {
@@ -125,9 +160,37 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
       value: `SYN-${files[1]!.id.slice(4, 12).toUpperCase()}`,
     },
   ]);
-  assert.deepEqual(removed, {
-    names: [REAL],
-    addresses: ["1 Real Street"],
+  assert.deepEqual(providerDetails(providers), {
+    names: [REAL, "Unseen Real Clinic"],
+    addresses: ["1 Real Street", "2 Real Avenue"],
     telecoms: ["555-0100"],
   });
+});
+
+test("a Synthea person the hospitals cannot hold faithfully is refused", () => {
+  const unknownMedication = {
+    ...bundle,
+    entry: [
+      ...(bundle.entry ?? []),
+      {
+        resource: {
+          resourceType: "MedicationRequest",
+          id: "rx",
+          status: "active",
+          medicationReference: { reference: "urn:uuid:no-such-medication" },
+        },
+      },
+    ],
+  } as Bundle;
+  const THIRD = hospital("cascade-west", "Cascade West Demo Hospital");
+  const PRESCRIBER = hospital("cascade-east", "Cascade East Demo Hospital", [
+    ...TYPES,
+    "MedicationRequest",
+  ]);
+  for (const [why, input, hospitals] of [
+    ["three hospitals", bundle, [NORTH, SOUTH, THIRD]],
+    ["a Medication not in the bundle", unknownMedication, [PRESCRIBER]],
+  ] as const) {
+    assert.throws(() => fromSynthea(input, [...hospitals]), Error, why);
+  }
 });

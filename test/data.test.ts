@@ -4,15 +4,20 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { Resource } from "../src/index.js";
 import { loadHospital } from "../src/node/index.js";
+import { OBSERVATION_CATEGORIES } from "../src/node/synthea.js";
 
 const PACKAGE = new URL("../../", import.meta.url);
 const FOLDERS = ["cascade-north", "cascade-south"];
 const removed = JSON.parse(
   await readFile(new URL("synthea/removed.json", PACKAGE), "utf8"),
 ) as Record<string, string[]>;
-const forbidden = Object.values(removed)
-  .flat()
-  .map((text) => text.toLowerCase());
+const forbidden = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:${Object.values(removed)
+    .flat()
+    .map((text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|")})(?![\\p{L}\\p{N}])`,
+  "iu",
+);
 
 function strings(value: unknown): string[] {
   if (typeof value === "string") return [value];
@@ -58,7 +63,7 @@ test("every patient file keeps the hospitals' data rules", async () => {
         if (record.resourceType === "Observation") {
           const codes = strings(record.category);
           assert.equal(
-            ["laboratory", "vital-signs"].filter((code) => codes.includes(code))
+            OBSERVATION_CATEGORIES.filter((code) => codes.includes(code))
               .length,
             1,
             name,
@@ -81,11 +86,9 @@ test("every patient file keeps the hospitals' data rules", async () => {
         }
         if (patient.startsWith("syn-")) {
           for (const text of strings(record)) {
-            const lower = text.toLowerCase();
-            assert.ok(!lower.includes("urn:uuid:"), name);
-            for (const word of forbidden) {
-              assert.ok(!lower.includes(word), `${name} names "${word}"`);
-            }
+            assert.ok(!text.toLowerCase().includes("urn:uuid:"), name);
+            const named = forbidden.exec(text)?.[0];
+            assert.equal(named, undefined, `${name} names "${named}"`);
           }
         }
       }

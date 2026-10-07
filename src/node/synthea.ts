@@ -1,18 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Bundle, Hospital, Resource } from "../index.js";
 
-export const KEPT_TYPES = [
-  "Patient",
-  "AllergyIntolerance",
-  "Condition",
-  "Encounter",
-  "Immunization",
-  "MedicationRequest",
-  "Observation",
-  "Procedure",
-];
-const OBSERVATION_CATEGORIES = ["laboratory", "vital-signs"];
+export const OBSERVATION_CATEGORIES = ["laboratory", "vital-signs"];
 const PROVIDER_TYPES = ["Organization", "Location"];
+const MAIDEN_NAME =
+  "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName";
 
 export interface HospitalFolder {
   folder: string;
@@ -44,20 +36,58 @@ export function withoutDigits(text: string): string {
   return text.replace(/(\p{L})\d+/gu, "$1");
 }
 
+export function bundleText(bundle: Bundle): string {
+  const entries = (bundle.entry ?? []).map((entry) => JSON.stringify(entry));
+  return `{"resourceType":"Bundle","type":"${bundle.type}","entry":[\n${entries.join(",\n")}\n]}\n`;
+}
+
+export function providerDetails(providers: Resource[]): Removed {
+  const removed: Removed = { names: [], addresses: [], telecoms: [] };
+  for (const provider of providers) {
+    if (
+      PROVIDER_TYPES.includes(provider.resourceType) &&
+      typeof provider.name === "string"
+    ) {
+      removed.names.push(provider.name);
+    }
+    for (const address of [provider.address ?? []].flat() as Json[]) {
+      for (const line of (address.line as string[] | undefined) ?? []) {
+        removed.addresses.push(line);
+      }
+    }
+    for (const telecom of (provider.telecom as Json[] | undefined) ?? []) {
+      if (telecom.system === "phone" && typeof telecom.value === "string") {
+        removed.telecoms.push(telecom.value);
+      }
+    }
+  }
+  const sorted = (list: string[]) => [...new Set(list)].sort();
+  return {
+    names: sorted(removed.names),
+    addresses: sorted(removed.addresses),
+    telecoms: sorted(removed.telecoms),
+  };
+}
+
 export function fromSynthea(
   bundle: Bundle,
   hospitals: HospitalFolder[],
-  providers: Resource[] = [],
-): { files: PatientFile[]; removed: Removed } {
+): PatientFile[] {
   const [home, away] = hospitals;
   if (!home) throw new Error("A person needs at least one hospital");
+  if (hospitals.length > 2) {
+    throw new Error("A person is split across at most two hospitals");
+  }
   const resources = (bundle.entry ?? []).map((entry) => entry.resource);
   const medications = new Map(
     resources
       .filter((resource) => resource.resourceType === "Medication")
       .map((resource) => [resource.id, resource.code]),
   );
-  const kept = resources.filter(keep);
+  const kept = resources.filter(
+    (resource) =>
+      hospitals.some((hospital) => holds(hospital, resource)) && keep(resource),
+  );
   const patient = kept.find((resource) => resource.resourceType === "Patient");
   if (!patient) throw new Error("A Synthea bundle holds one Patient");
 
@@ -85,14 +115,16 @@ export function fromSynthea(
         : uuidOf((resource.encounter as Json | undefined)?.reference);
     const at = encounter ? encounterAt.get(encounter) : undefined;
     for (const hospital of hospitals) {
-      if (!at || at === hospital || reconciled(resource)) {
+      if (
+        holds(hospital, resource) &&
+        (!at || at === hospital || reconciled(resource))
+      ) {
         placed.get(hospital)?.push(resource);
       }
     }
   }
 
-  const seen = new Set<string>();
-  const files = hospitals.map((hospital) => {
+  return hospitals.map((hospital) => {
     const here = placed.get(hospital) ?? [];
     const ids = new Map(
       here.map((resource) => [
@@ -101,7 +133,7 @@ export function fromSynthea(
       ]),
     );
     const entry = here.map((resource) => ({
-      resource: rewrite(resource, hospital, ids, medications, seen),
+      resource: rewrite(resource, hospital, ids, medications),
     }));
     return {
       folder: hospital.folder,
@@ -109,30 +141,13 @@ export function fromSynthea(
       bundle: { resourceType: "Bundle" as const, type: "collection", entry },
     };
   });
+}
 
-  const removed: Removed = { names: [], addresses: [], telecoms: [] };
-  for (const provider of providers) {
-    const identifiers = (provider.identifier as Json[] | undefined) ?? [];
-    if (!identifiers.some((identifier) => seen.has(String(identifier.value)))) {
-      continue;
-    }
-    if (typeof provider.name === "string") removed.names.push(provider.name);
-    for (const address of [provider.address ?? []].flat() as Json[]) {
-      for (const line of (address.line as string[] | undefined) ?? []) {
-        removed.addresses.push(line);
-      }
-    }
-    for (const telecom of (provider.telecom as Json[] | undefined) ?? []) {
-      if (typeof telecom.value === "string") {
-        removed.telecoms.push(telecom.value);
-      }
-    }
-  }
-  return { files, removed };
+function holds(hospital: HospitalFolder, resource: Resource): boolean {
+  return hospital.hospital.types.includes(resource.resourceType);
 }
 
 function keep(resource: Resource): boolean {
-  if (!KEPT_TYPES.includes(resource.resourceType)) return false;
   if (resource.resourceType !== "Observation") return true;
   const codes = categoryCodes(resource);
   return (
@@ -178,7 +193,6 @@ function rewrite(
   hospital: HospitalFolder,
   ids: Map<string, string>,
   medications: Map<string, unknown>,
-  seen: Set<string>,
 ): Resource {
   const copy = structuredClone(resource) as Json;
   const reference = ids.get(resource.id) ?? "";
@@ -192,8 +206,11 @@ function rewrite(
         value: `SYN-${id.slice(4, 12).toUpperCase()}`,
       },
     ];
-    for (const field of ["name", "extension"]) {
-      copy[field] = stripDigits(copy[field]);
+    copy.name = stripDigits(copy.name);
+    for (const extension of (copy.extension as Json[] | undefined) ?? []) {
+      if (extension.url === MAIDEN_NAME) {
+        extension.valueString = stripDigits(extension.valueString);
+      }
     }
   } else {
     delete copy.identifier;
@@ -202,10 +219,15 @@ function rewrite(
     (copy.medicationReference as Json | undefined)?.reference,
   );
   if (medication !== undefined) {
+    if (!medications.has(medication)) {
+      throw new Error(
+        `MedicationRequest/${resource.id} names a Medication not in the bundle`,
+      );
+    }
     copy.medicationCodeableConcept = medications.get(medication);
     delete copy.medicationReference;
   }
-  return pruned(copy, hospital, ids, seen) as Resource;
+  return pruned(copy, hospital, ids) as Resource;
 }
 
 function stripDigits(value: unknown): unknown {
@@ -228,22 +250,21 @@ function pruned(
   value: unknown,
   hospital: HospitalFolder,
   ids: Map<string, string>,
-  seen: Set<string>,
 ): unknown {
   if (Array.isArray(value)) {
     const items = value
-      .map((item) => pruned(item, hospital, ids, seen))
+      .map((item) => pruned(item, hospital, ids))
       .filter((item) => item !== GONE);
     return items.length > 0 ? items : GONE;
   }
   if (!value || typeof value !== "object") return value;
   const object = value as Json;
   if (typeof object.reference === "string") {
-    return reference(object, hospital, ids, seen);
+    return reference(object, hospital, ids);
   }
   const result: Json = {};
   for (const [key, item] of Object.entries(object)) {
-    const next = pruned(item, hospital, ids, seen);
+    const next = pruned(item, hospital, ids);
     if (next !== GONE) result[key] = next;
   }
   return result;
@@ -253,7 +274,6 @@ function reference(
   object: Json,
   hospital: HospitalFolder,
   ids: Map<string, string>,
-  seen: Set<string>,
 ): Json | typeof GONE {
   const target = String(object.reference);
   const uuid = uuidOf(target);
@@ -269,8 +289,6 @@ function reference(
     return result;
   }
   const type = target.replace(/[?/].*/, "");
-  const identifier = /\|(.+)$/.exec(target)?.[1];
-  if (identifier) seen.add(identifier);
   if (PROVIDER_TYPES.includes(type)) {
     return { display: hospital.hospital.name };
   }
