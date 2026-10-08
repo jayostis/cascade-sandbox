@@ -271,12 +271,18 @@ test("two hospitals: A at South is South's patient, and North's token is refused
   assert.equal(refused.status, 401);
 });
 
-test("a patient signs in through the page, or cancels", async () => {
+test("a patient signs in through the page, which says what the app asks in words, or cancels", async () => {
   const hospital = demoHospital(north);
   const shown = await authorize(hospital, NORTH);
   assert.equal(shown.status, 200);
   const page = await shown.text();
-  for (const name of ["Rowan Ellery Marsh", "Tobias Fenn", CLIENT]) {
+  for (const name of [
+    "Rowan Ellery Marsh",
+    "Tobias Fenn",
+    CLIENT,
+    "Know which patient you are",
+    "Read your whole health record",
+  ]) {
     assert.ok(page.includes(name), name);
   }
 

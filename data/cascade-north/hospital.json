@@ -1,5 +1,6 @@
 {
   "name": "Cascade North Demo Hospital",
+  "colour": "#0b5c8a",
   "fhirBase": "https://cascade-north.demo.invalid/fhir",
   "pageSize": 2,
   "key": "cascade-north-demo-key-public-not-a-secret",

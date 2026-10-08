@@ -2,6 +2,7 @@ import { Signer, sha256 } from "./signed.js";
 
 export interface Hospital {
   name: string;
+  colour?: string;
   fhirBase: string;
   pageSize: number;
   key: string;
@@ -72,8 +73,8 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       return html(
         400,
         page(
-          hospital.name,
-          "<p>This sign-in request has no valid <code>redirect_uri</code> or no <code>client_id</code>, so it cannot be answered by sending you back to the app.</p>",
+          hospital,
+          "<h1>This sign-in cannot go on</h1><p>This sign-in request has no valid <code>redirect_uri</code> or no <code>client_id</code>, so it cannot be answered by sending you back to the app.</p>",
         ),
       );
     }
@@ -140,28 +141,36 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     const choices = [...patients]
       .map(
         ([id, bundle], index) =>
-          `<label><input type="radio" name="patient" value="${escape(id)}"${index === 0 ? " checked" : ""}> ${escape(patientName(bundle, id))}</label>`,
+          `<label class="choice"><input type="radio" name="patient" value="${escape(id)}"${index === 0 ? " checked" : ""}> ${escape(patientName(bundle, id))}</label>`,
       )
-      .join("\n      ");
+      .join("\n        ");
     const scopes = (parameters.get("scope") ?? "")
       .split(" ")
       .filter(Boolean)
-      .map((scope) => `<li><code>${escape(scope)}</code></li>`)
-      .join("");
+      .map(
+        (scope) =>
+          `<li>${escape(scopeInWords(scope) ?? scope)}<code>${escape(scope)}</code></li>`,
+      )
+      .join("\n        ");
     return page(
-      hospital.name,
-      `<p>This is a demo hospital for testing. There is no password, and every patient here is made up.</p>
-    <p>The app <strong>${escape(parameters.get("client_id") ?? "")}</strong> asks to read your record:</p>
-    <ul>${scopes}</ul>
-    <form method="post" action="${escape(authorizeUrl)}">
-      ${hiddenInputs}
-      <fieldset>
-      <legend>Sign in as</legend>
-      ${choices}
-      </fieldset>
-      <button type="submit" name="decision" value="allow">Allow</button>
-      <button type="submit" name="decision" value="cancel">Cancel</button>
-    </form>`,
+      hospital,
+      `<h1>Sign in</h1>
+      <p>The app <strong>${escape(parameters.get("client_id") ?? "")}</strong> wants to connect to your record at ${escape(hospital.name)}.</p>
+      <form method="post" action="${escape(authorizeUrl)}">
+        ${hiddenInputs}
+        <fieldset>
+        <legend>Sign in as</legend>
+        ${choices}
+        </fieldset>
+        <h2>If you allow it, the app can</h2>
+        <ul class="scopes">
+        ${scopes}
+        </ul>
+        <div class="actions">
+          <button type="submit" name="decision" value="allow" class="allow">Allow</button>
+          <button type="submit" name="decision" value="cancel">Cancel</button>
+        </div>
+      </form>`,
     );
   }
 
@@ -415,18 +424,57 @@ function escape(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function page(title: string, body: string): string {
+function scopeInWords(scope: string): string | undefined {
+  if (scope === "launch/patient") return "Know which patient you are";
+  const read = /^patient\/(\*|[A-Za-z]+)\.(read|rs)$/.exec(scope)?.[1];
+  if (read === undefined) return undefined;
+  return read === "*"
+    ? "Read your whole health record"
+    : `Read your ${read} records`;
+}
+
+function page(hospital: Hospital, body: string): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${escape(title)} (demo)</title>
+    <title>${escape(hospital.name)} (demo)</title>
+    <style>
+      :root { --hospital: ${escape(hospital.colour ?? "#3d4f5c")}; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #eef1f4; color: #1f2a33; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      header { background: var(--hospital); color: #fff; padding: 14px 16px; }
+      header div { max-width: 460px; margin: 0 auto; display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 1.1rem; }
+      header span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; background: #fff; color: var(--hospital); font-size: 1.4rem; line-height: 1; }
+      header p { margin: 0; }
+      header small { display: block; font-weight: 400; font-size: 0.8rem; opacity: 0.85; }
+      main { max-width: 460px; margin: 24px auto; padding: 24px; background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+      @media (max-width: 500px) { main { margin: 0; border-radius: 0; box-shadow: none; padding: 20px 16px; } }
+      h1 { margin: 0 0 8px; font-size: 1.4rem; }
+      h2 { margin: 20px 0 8px; font-size: 1rem; }
+      fieldset { margin: 16px 0 0; padding: 0; border: 0; }
+      legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
+      .choice { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid #ccd3da; border-radius: 8px; cursor: pointer; }
+      .choice:has(input:checked) { border-color: var(--hospital); background: #f4f8fb; }
+      .choice input { accent-color: var(--hospital); margin: 0; }
+      .scopes { margin: 0; padding: 0; list-style: none; }
+      .scopes li { padding: 8px 0; border-top: 1px solid #e3e7eb; }
+      .scopes code { display: block; color: #66727d; font-size: 0.75rem; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+      button { flex: 1 1 140px; padding: 12px; border-radius: 8px; border: 1px solid #9aa6b1; background: #fff; color: #1f2a33; font: inherit; font-weight: 600; cursor: pointer; }
+      button.allow { border-color: var(--hospital); background: var(--hospital); color: #fff; }
+      button:focus-visible { outline: 3px solid #f2b705; outline-offset: 2px; }
+      footer { max-width: 460px; margin: 0 auto 24px; padding: 0 16px; color: #56636e; font-size: 0.85rem; text-align: center; }
+      @media (max-width: 500px) { footer { margin-top: 16px; } }
+    </style>
   </head>
   <body>
-    <h1>${escape(title)}</h1>
-    <p><strong>Demo only:</strong> a pretend hospital for testing apps. Not a real sign-in.</p>
-    ${body}
+    <header><div><span aria-hidden="true">+</span><p>${escape(hospital.name)}<small>Patient portal</small></p></div></header>
+    <main>
+      ${body}
+    </main>
+    <footer>A demo hospital for testing apps: there is no password, and every patient here is made up.</footer>
   </body>
 </html>
 `;

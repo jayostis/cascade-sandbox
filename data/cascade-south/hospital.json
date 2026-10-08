@@ -1,5 +1,6 @@
 {
   "name": "Cascade South Demo Hospital",
+  "colour": "#8a2b47",
   "fhirBase": "https://cascade-south.demo.invalid/fhir",
   "pageSize": 3,
   "key": "cascade-south-demo-key-public-not-a-secret",
