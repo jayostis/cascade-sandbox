@@ -273,7 +273,9 @@ test("two hospitals: A at South is South's patient, and North's token is refused
 
 test("a patient signs in through the page, which says what the app asks in words, or cancels", async () => {
   const hospital = demoHospital(north);
-  const shown = await authorize(hospital, NORTH);
+  const shown = await authorize(hospital, NORTH, {
+    scope: "launch/patient patient/*.rs patient/Observation.read openid",
+  });
   assert.equal(shown.status, 200);
   const page = await shown.text();
   for (const name of [
@@ -282,9 +284,16 @@ test("a patient signs in through the page, which says what the app asks in words
     CLIENT,
     "Know which patient you are",
     "Read your whole health record",
+    "Read your Observation records",
   ]) {
     assert.ok(page.includes(name), name);
   }
+  const scopes = /<ul class="scopes">([\s\S]*?)<\/ul>/.exec(page)?.[1] ?? "";
+  assert.equal(scopes.split("openid").length - 1, 1);
+  const unscoped = await (
+    await authorize(hospital, NORTH, { scope: undefined })
+  ).text();
+  assert.ok(!unscoped.includes("If you allow it"));
 
   const post = (decision: string) =>
     hospital(

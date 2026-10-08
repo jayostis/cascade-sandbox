@@ -47,7 +47,7 @@ restarts in the middle of a sign-in loses nothing.
 ```
 data/
   cascade-north/
-    hospital.json        name, FHIR base, page size, key, types, references left out of searches
+    hospital.json        name, sign-in page colour (optional, dark), FHIR base, page size, key, types, references left out of searches
     patients/<id>.json   one patient's record there, as a FHIR R4 Bundle
   cascade-south/
     ...
