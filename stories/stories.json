@@ -27,7 +27,7 @@
   {
     "patient": "story-stopped",
     "hospital": "cascade-north",
-    "story": "Stopped and rebound",
+    "story": "Lab moved after a stop",
     "ccda": "story-stopped.xml",
     "findings": [
       {
@@ -53,7 +53,7 @@
   {
     "patient": "story-side-effect",
     "hospital": "cascade-north",
-    "story": "Side effect",
+    "story": "Lab moved after a start",
     "findings": [
       {
         "kind": "after start",

@@ -64,8 +64,8 @@ Every name and record is synthetic, and comes in three kinds.
   Hermiston is at both hospitals, Eliseo Krajcik at North and Bertie Hackett at
   South. [`synthea/README.md`](synthea/README.md) says how they were made and
   how to make them again.
-- **Story patients, for grading an analysis** (`patients/story-*.json`, at North
-  only): five small patients, each with a planted change in their labs after a
+- **Story patients, for grading an analysis** (hand-written `patients/story-*.json`, at North
+  only; the NDC `99999-0861-01` in their metformin is invented): five small patients, each with a planted change in their labs after a
   medication starts or stops, or none, and the written answer. The answers are
   [`stories/stories.json`](stories/stories.json), outside `data/` so no hospital
   serves them, read through `loadStories()` from
