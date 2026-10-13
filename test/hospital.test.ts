@@ -154,6 +154,7 @@ const SEARCHES = [
   "Encounter",
   "Immunization",
   "MedicationRequest",
+  "MedicationStatement",
   "Observation&category=laboratory",
   "Observation&category=vital-signs",
 ];

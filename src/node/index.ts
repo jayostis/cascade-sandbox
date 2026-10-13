@@ -1,9 +1,19 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Bundle, Hospital } from "../index.js";
+import type { Bundle, Hospital, Story } from "../index.js";
 
 const DATA = fileURLToPath(new URL("../../../data/", import.meta.url));
+/** Where the stories' written answers and C-CDA copies are, outside `data/` so no hospital serves them. */
+export const STORIES = fileURLToPath(
+  new URL("../../../stories/", import.meta.url),
+);
+
+export async function loadStories(): Promise<Story[]> {
+  return JSON.parse(
+    await readFile(join(STORIES, "stories.json"), "utf8"),
+  ) as Story[];
+}
 
 export async function loadHospital(
   folder: string,

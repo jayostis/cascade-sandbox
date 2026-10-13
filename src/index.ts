@@ -11,6 +11,38 @@ export interface Hospital {
   hiddenFromSearch: string[];
 }
 
+/** One result of a story's pair, by the day it was taken. */
+export interface StoryResult {
+  date: string;
+  value: number;
+}
+
+/** What a story's data shows of one medication and one test, in the words of an analysis's finding. */
+export interface StoryFinding {
+  kind: "after start" | "after stop";
+  /** A bare RxNorm code. */
+  medication: string;
+  /** A bare LOINC code. */
+  test: string;
+  /** The day the medication started or stopped. */
+  date: string;
+  direction: "up" | "down" | "not enough results";
+  unit: string;
+  before: StoryResult[];
+  after: StoryResult[];
+}
+
+/** A synthetic patient whose data holds a planted finding, or none, and the written answer. */
+export interface Story {
+  /** The patient's id at the hospital. */
+  patient: string;
+  hospital: string;
+  story: string;
+  findings: StoryFinding[];
+  /** The file name, under the stories folder, of the same record as a C-CDA document. */
+  ccda?: string;
+}
+
 export interface Resource {
   resourceType: string;
   id: string;

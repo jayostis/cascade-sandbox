@@ -11,6 +11,7 @@
     "Encounter",
     "Immunization",
     "MedicationRequest",
+    "MedicationStatement",
     "Observation",
     "Procedure"
   ],

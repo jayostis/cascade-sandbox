@@ -53,7 +53,7 @@ data/
     ...
 ```
 
-Every name and record is synthetic, and comes in two kinds.
+Every name and record is synthetic, and comes in three kinds.
 
 - **Hand-written, for the tests.** Rowan Ellery Marsh is a patient at both
   hospitals, under a different patient id and different record ids at each;
@@ -64,6 +64,16 @@ Every name and record is synthetic, and comes in two kinds.
   Hermiston is at both hospitals, Eliseo Krajcik at North and Bertie Hackett at
   South. [`synthea/README.md`](synthea/README.md) says how they were made and
   how to make them again.
+- **Story patients, for grading an analysis** (`patients/story-*.json`, at North
+  only): five small patients, each with a planted change in their labs after a
+  medication starts or stops, or none, and the written answer. The answers are
+  [`stories/stories.json`](stories/stories.json), outside `data/` so no hospital
+  serves them, read through `loadStories()` from
+  `@cascade-runtime/demo-hospital/node`. Each states what changed after the
+  medication, never that the medication caused it. `story-stopped` is also a
+  C-CDA document, `stories/story-stopped.xml`, whose records the matcher joins
+  to the FHIR copy by their shared NDC (and, where the pod holds a drug products
+  table, their RxNorm code).
 
 [`data/NOTICE.md`](data/NOTICE.md) carries the notices for the codes in the
 data.
