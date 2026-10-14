@@ -172,6 +172,11 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       )
       .join("\n      ");
     const choices = [...patients]
+      .sort(
+        ([a, first], [b, second]) =>
+          namesOf(first, a).family.localeCompare(namesOf(second, b).family) ||
+          namesOf(first, a).given.localeCompare(namesOf(second, b).given),
+      )
       .map(
         ([id, bundle], index) =>
           `<label class="choice"><input type="radio" name="patient" value="${escape(id)}"${index === 0 ? " checked" : ""}> ${escape(patientName(bundle, id))}</label>`,
@@ -446,12 +451,23 @@ function token(text: string): { system?: string; code: string } {
     : { system: text.slice(0, bar), code: text.slice(bar + 1) };
 }
 
-function patientName(bundle: Bundle, id: string): string {
+function namesOf(
+  bundle: Bundle,
+  id: string,
+): { family: string; given: string } {
   const patient = bundle.entry?.find(
     (entry) => entry.resource.resourceType === "Patient",
   )?.resource as { name?: { given?: string[]; family?: string }[] } | undefined;
   const name = patient?.name?.[0];
-  return name ? [...(name.given ?? []), name.family].join(" ") : id;
+  return name
+    ? { family: name.family ?? "", given: (name.given ?? []).join(" ") }
+    : { family: id, given: "" };
+}
+
+/** A patient as the sign-in page lists them, family name first: `Marsh, Rowan Ellery`. */
+function patientName(bundle: Bundle, id: string): string {
+  const { family, given } = namesOf(bundle, id);
+  return [family, given].filter(Boolean).join(", ");
 }
 
 function escape(text: string): string {

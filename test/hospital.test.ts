@@ -279,9 +279,21 @@ test("a patient signs in through the page, which says what the app asks in words
   });
   assert.equal(shown.status, 200);
   const page = await shown.text();
+  const listed = [
+    ...page.matchAll(/<label class="choice">[^>]*> ([^<]*)<\/label>/g),
+  ].map(([, name]) => name ?? "");
+  assert.equal(listed.length, Object.keys(north.patients).length);
+  const byFamily = [...listed].sort((a, b) => {
+    const [x, y] = [a, b].map((name) => name.split(", "));
+    return (
+      (x?.[0] ?? "").localeCompare(y?.[0] ?? "") ||
+      (x?.[1] ?? "").localeCompare(y?.[1] ?? "")
+    );
+  });
+  assert.deepEqual(listed, byFamily, "patients are not in family-name order");
   for (const name of [
-    "Rowan Ellery Marsh",
-    "Tobias Fenn",
+    "Marsh, Rowan Ellery",
+    "Fenn, Tobias",
     CLIENT,
     "Know which patient you are",
     "Read your whole health record",
