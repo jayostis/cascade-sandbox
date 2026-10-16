@@ -457,6 +457,66 @@
           "code": "kg"
         }
       }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "alg-2",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+              "code": "confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "723",
+              "display": "amoxicillin"
+            }
+          ],
+          "text": "Amoxicillin"
+        },
+        "patient": { "reference": "Patient/pt-1001" },
+        "reaction": [{ "manifestation": [{ "text": "Rash" }] }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-4",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "206805",
+              "display": "Claritin"
+            }
+          ],
+          "text": "Claritin"
+        },
+        "subject": { "reference": "Patient/pt-1001" },
+        "encounter": { "reference": "Encounter/enc-2" },
+        "authoredOn": "2025-06-18",
+        "dosageInstruction": [
+          {
+            "text": "Take 1 tablet by mouth once daily as needed for allergies"
+          }
+        ]
+      }
     }
   ]
 }

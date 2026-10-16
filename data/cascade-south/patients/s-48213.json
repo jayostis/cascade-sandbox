@@ -188,6 +188,85 @@
           "code": "/min"
         }
       }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "a-4401",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+              "code": "active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+              "code": "confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "308191",
+              "display": "amoxicillin 500 MG Oral Capsule"
+            }
+          ],
+          "text": "Amoxicillin 500 mg capsule"
+        },
+        "patient": { "reference": "Patient/s-48213" },
+        "reaction": [{ "manifestation": [{ "text": "Rash" }] }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "m-9015",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "311372",
+              "display": "loratadine 10 MG Oral Tablet"
+            }
+          ],
+          "text": "Loratadine 10 mg oral tablet"
+        },
+        "subject": { "reference": "Patient/s-48213" },
+        "encounter": { "reference": "Encounter/e-5501" },
+        "authoredOn": "2025-08-05",
+        "dosageInstruction": [
+          { "text": "1 tablet orally once a day as needed" }
+        ]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "m-9016",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "314077",
+              "display": "lisinopril 20 MG Oral Tablet"
+            }
+          ],
+          "text": "Lisinopril 20 mg oral tablet"
+        },
+        "subject": { "reference": "Patient/s-48213" },
+        "authoredOn": "2026-03-10",
+        "dosageInstruction": [{ "text": "1 tablet orally once a day" }]
+      }
     }
   ]
 }
