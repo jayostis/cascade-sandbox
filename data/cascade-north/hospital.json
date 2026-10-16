@@ -2,6 +2,7 @@
   "name": "Cascade North Demo Hospital",
   "colour": "#0b5c8a",
   "fhirBase": "https://cascade-north.demo.invalid/fhir",
+  "places": ["Bellingham, WA", "Mount Vernon, WA"],
   "pageSize": 2,
   "key": "cascade-north-demo-key-public-not-a-secret",
   "types": [

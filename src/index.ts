@@ -5,6 +5,8 @@ export interface Hospital {
   /** A dark CSS colour: the header and the Allow button carry white text on it. */
   colour?: string;
   fhirBase: string;
+  /** The towns a person would search for it by, as `"Bellingham, WA"`. */
+  places?: string[];
   pageSize: number;
   key: string;
   types: string[];
@@ -602,3 +604,4 @@ function outcome(
 }
 
 export * from "./route.js";
+export { brandsBundle } from "./brands.js";
