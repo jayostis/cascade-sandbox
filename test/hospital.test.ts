@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -341,6 +341,17 @@ test("each bad request is refused as the protocol says", async () => {
     await signIn(north, A_NORTH, "patient/Observation.read")
   ).token;
   const unscoped = (await signIn(north, A_NORTH, "")).token;
+  const notReading = await Promise.all(
+    [
+      "patient/*.write",
+      "patient/Observation.s",
+      "patient/Observation.rs?category=laboratory",
+      "user/*.read",
+    ].map(
+      async (scope) =>
+        [scope, (await signIn(north, A_NORTH, scope)).token] as const,
+    ),
+  );
 
   const authorizeRows: [
     string,
@@ -435,7 +446,7 @@ test("each bad request is refused as the protocol says", async () => {
     assert.equal((await response.json()).error, error, name);
   }
 
-  const fhirRows: [
+  type FhirRow = [
     string,
     DemoHospital,
     string,
@@ -443,7 +454,8 @@ test("each bad request is refused as the protocol says", async () => {
     number,
     string,
     string?,
-  ][] = [
+  ];
+  const fhirRows: FhirRow[] = [
     [
       "no token",
       hospital,
@@ -545,6 +557,15 @@ test("each bad request is refused as the protocol says", async () => {
       "forbidden",
       "The token's scopes do not cover a read of Patient.",
     ],
+    ...notReading.map(([scope, bearer]): FhirRow => [
+      `a read under ${scope}`,
+      hospital,
+      "Observation/lab-1",
+      bearer,
+      403,
+      "forbidden",
+      "The token's scopes do not cover a read of Observation.",
+    ]),
     [
       "a type not served",
       hospital,
@@ -604,8 +625,9 @@ test("each bad request is refused as the protocol says", async () => {
   );
 });
 
-test("a patient file must hold the patient it is named for", async () => {
+test("a patient file must hold the patient it is named for", async (t) => {
   const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
+  t.after(() => rm(folder, { recursive: true, force: true }));
   await mkdir(join(folder, "patients"));
   await writeFile(
     join(folder, "hospital.json"),

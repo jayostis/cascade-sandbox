@@ -28,11 +28,12 @@ const INSTANT =
 
 /** Whether `text` is a FHIR `instant`: a time to the second, with a timezone. */
 export function isInstant(text: unknown): text is string {
-  return (
-    typeof text === "string" &&
-    INSTANT.test(text) &&
-    !Number.isNaN(Date.parse(text))
-  );
+  if (typeof text !== "string" || !INSTANT.test(text)) return false;
+  const [year, month, day] = text.split("T")[0]!.split("-").map(Number);
+  if (year! < 1000) return false;
+  const written = new Date(0);
+  written.setUTCFullYear(year!, month! - 1, day!);
+  return written.getUTCDate() === day;
 }
 
 /** Each record's versions in a patient file, oldest first, checked by the file's rules; throws HospitalDataError. */
@@ -228,7 +229,7 @@ export function patientRecords(
     if (held !== id) {
       throw new HospitalDataError(
         where,
-        `${where} holds Patient ${held ?? "(none)"}, not ${id}`,
+        `holds Patient ${held ?? "(none)"}, not ${id}`,
       );
     }
     checked.set(id, records);

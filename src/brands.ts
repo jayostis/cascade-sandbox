@@ -1,6 +1,8 @@
 import type { Bundle, Hospital, Resource } from "./index.js";
 import { hospitalId } from "./route.js";
 
+/** The base every entry's `fullUrl` sits on, so the Organizations' relative `Endpoint/<id>` references resolve in the bundle. */
+const BRANDS_BASE = "https://demo.invalid/brands";
 const PROFILES = "http://hl7.org/fhir/smart-app-launch/StructureDefinition/";
 const BUNDLE_PROFILE = `${PROFILES}user-access-brands-bundle`;
 const PORTAL = "http://hl7.org/fhir/StructureDefinition/organization-portal";
@@ -75,10 +77,12 @@ export function brandsBundle(
     timestamp,
     entry: hospitals.flatMap((hospital) => {
       const id = hospitalId({ hospital, patients: {} });
-      return [
-        { resource: organizationOf(hospital, id) },
-        { resource: endpointOf(hospital, id) },
-      ];
+      return [organizationOf(hospital, id), endpointOf(hospital, id)].map(
+        (resource) => ({
+          fullUrl: `${BRANDS_BASE}/${resource.resourceType}/${resource.id}`,
+          resource,
+        }),
+      );
     }),
   };
 }
