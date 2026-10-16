@@ -168,7 +168,8 @@
           "text": "Fracture around right hip replacement"
         },
         "subject": { "reference": "Patient/pt-1002" },
-        "onsetDateTime": "2021-11-09"
+        "onsetDateTime": "2021-11-09",
+        "recordedDate": "2021-11-09"
       }
     },
     {
@@ -204,7 +205,8 @@
           "text": "Fracture around right hip replacement"
         },
         "subject": { "reference": "Patient/pt-1002" },
-        "onsetDateTime": "2023-02-14"
+        "onsetDateTime": "2021-11-09",
+        "recordedDate": "2023-02-14"
       }
     },
     {

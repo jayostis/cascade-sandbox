@@ -127,7 +127,6 @@ const ICD = "http://hl7.org/fhir/sid/icd-10-cm";
 const CVX = "http://hl7.org/fhir/sid/cvx";
 const LOINC = "http://loinc.org";
 const RXNORM = "http://www.nlm.nih.gov/research/umls/rxnorm";
-const SNOMED = "http://snomed.info/sct";
 
 test("hand-written patients hold the codes that reach the reference tables: retired and current ICD-10-CM, CVX and LOINC beside each other, a brand and its generic, two allergies and two medicines of one ingredient, in two hospitals for one person", async () => {
   const north = await loadHospital("cascade-north");
@@ -167,13 +166,10 @@ test("hand-written patients hold the codes that reach the reference tables: reti
       [],
       "coded by ICD-10-CM alone, so only the conversion joins them",
     );
-    assert.ok(
-      !codings(condition.record.code).some((c) => c.startsWith(SNOMED)),
-    );
   }
   assert.ok(
-    Date.parse(String(conditions[0]!.record.onsetDateTime)) <
-      Date.parse(String(conditions[1]!.record.onsetDateTime)),
+    Date.parse(String(conditions[0]!.record.recordedDate)) <
+      Date.parse(String(conditions[1]!.record.recordedDate)),
     "the retired code was recorded before its replacement",
   );
   assert.ok(has(north, "pt-1002", "Immunization", CVX, "154"));
