@@ -24,6 +24,12 @@ test("a brands bundle holds an Organization and its Endpoint for each hospital, 
   );
   assert.equal(bundle.type, "collection");
   assert.equal(bundle.timestamp, "2026-01-01T00:00:00Z");
+  assert.deepEqual(bundle.meta, {
+    lastUpdated: "2026-01-01T00:00:00Z",
+    profile: [
+      "http://hl7.org/fhir/smart-app-launch/StructureDefinition/user-access-brands-bundle",
+    ],
+  });
   const resources = (bundle.entry ?? []).map(({ resource }) => resource);
   assert.deepEqual(
     resources.map((each) => `${each?.resourceType}/${each?.id}`),
@@ -41,6 +47,19 @@ test("a brands bundle holds an Organization and its Endpoint for each hospital, 
   ]);
   assert.deepEqual(organization?.identifier, [
     { system: "urn:ietf:rfc:3986", value: "https://one.demo.invalid" },
+  ]);
+  const site = [{ system: "url", value: "https://one.demo.invalid" }];
+  assert.deepEqual(organization?.telecom, site);
+  assert.deepEqual(endpoint?.contact, site);
+  assert.deepEqual(endpoint?.payloadType, [
+    {
+      coding: [
+        {
+          system: "http://terminology.hl7.org/CodeSystem/endpoint-payload-type",
+          code: "none",
+        },
+      ],
+    },
   ]);
   assert.deepEqual(organization?.address, [
     { city: "Bellingham", state: "WA" },

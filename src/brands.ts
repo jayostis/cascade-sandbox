@@ -1,6 +1,8 @@
 import type { Bundle, Hospital, Resource } from "./index.js";
 import { hospitalId } from "./route.js";
 
+const PROFILES = "http://hl7.org/fhir/smart-app-launch/StructureDefinition/";
+const BUNDLE_PROFILE = `${PROFILES}user-access-brands-bundle`;
 const PORTAL = "http://hl7.org/fhir/StructureDefinition/organization-portal";
 const FHIR_VERSION =
   "http://hl7.org/fhir/StructureDefinition/endpoint-fhir-version";
@@ -22,6 +24,7 @@ function organizationOf(hospital: Hospital, id: string): Resource {
   return {
     resourceType: "Organization",
     id,
+    meta: { profile: [`${PROFILES}user-access-brand`] },
     extension: [
       {
         url: PORTAL,
@@ -35,6 +38,7 @@ function organizationOf(hospital: Hospital, id: string): Resource {
       { system: "urn:ietf:rfc:3986", value: `https://${id}.demo.invalid` },
     ],
     name: hospital.name,
+    telecom: [{ system: "url", value: `https://${id}.demo.invalid` }],
     ...(hospital.places?.length
       ? { address: hospital.places.map(addressOf) }
       : {}),
@@ -46,8 +50,10 @@ function endpointOf(hospital: Hospital, id: string): Resource {
   return {
     resourceType: "Endpoint",
     id: `${id}-fhir`,
+    meta: { profile: [`${PROFILES}user-access-endpoint`] },
     extension: [{ url: FHIR_VERSION, valueCode: "4.0.1" }],
     status: "active",
+    contact: [{ system: "url", value: `https://${id}.demo.invalid` }],
     connectionType: { system: CONNECTION_TYPES, code: "hl7-fhir-rest" },
     payloadType: [{ coding: [{ system: PAYLOAD_TYPES, code: "none" }] }],
     address: hospital.fhirBase,
@@ -61,9 +67,10 @@ function endpointOf(hospital: Hospital, id: string): Resource {
 export function brandsBundle(
   hospitals: readonly Hospital[],
   timestamp: string,
-): Bundle & { timestamp: string } {
+): Bundle & { timestamp: string; meta: Record<string, unknown> } {
   return {
     resourceType: "Bundle",
+    meta: { lastUpdated: timestamp, profile: [BUNDLE_PROFILE] },
     type: "collection",
     timestamp,
     entry: hospitals.flatMap((hospital) => {
