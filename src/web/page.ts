@@ -21,21 +21,21 @@ export async function worldDate(
  * Sets the world's date, an instant, for the worker at `scriptUrl`, or with undefined removes it so every hospital
  * answers with every version it holds. The date is kept in Cache Storage, where the worker finds it again after it
  * was stopped; resolves once the worker has dropped the hospitals it answered with, so the next request is as of the
- * new date. Rejects, saying why, when the worker is not running.
+ * new date. Rejects, saying why and leaving the kept date as it was, when the worker is not running.
  */
 export async function setWorldDate(
   scriptUrl: string | URL,
   asOf: string | undefined,
 ): Promise<void> {
   const scope = scopeOf(scriptUrl);
-  const cache = await caches.open(WORLD_CACHE);
-  const key = new URL(WORLD_KEY, scope);
-  if (asOf === undefined) await cache.delete(key);
-  else await cache.put(key, new Response(asOf));
   const worker = (await navigator.serviceWorker.getRegistration(scope.href))
     ?.active;
   if (worker === undefined || worker === null)
     throw new Error("The demo hospitals' worker is not running on this page.");
+  const cache = await caches.open(WORLD_CACHE);
+  const key = new URL(WORLD_KEY, scope);
+  if (asOf === undefined) await cache.delete(key);
+  else await cache.put(key, new Response(asOf));
   await new Promise<void>((resolve, reject) => {
     const channel = new MessageChannel();
     const timer = setTimeout(
