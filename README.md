@@ -7,8 +7,8 @@ network.
 A hospital is one function, `(request: Request) => Promise<Response>`, made from
 that hospital's data and answering at its FHIR base URL: discovery
 (`.well-known/smart-configuration`), the authorize endpoint (a sign-in page, or
-an automatic approval), the token endpoint, and FHIR reads and searches by
-patient. It uses only `Request`, `Response`, `URL` and WebCrypto, so it runs
+an automatic approval), the token endpoint, and FHIR reads, searches and
+histories by patient, as of a date. It uses only `Request`, `Response`, `URL` and WebCrypto, so it runs
 unchanged in Node and in a browser.
 
 ```ts
@@ -25,7 +25,35 @@ const response = await north(
 
 Options: `hospital` and `patients` (what `loadHospital` returns),
 `authorizeUrl` (the sign-in page's address, by default `<base>/authorize`),
-`autoApprove` (a patient id: sign in as them with no page) and `now` (a clock).
+`autoApprove` (a patient id: sign in as them with no page), `now` (the clock
+codes and tokens expire by) and `asOf` (the world's date, a FHIR instant such as
+`2024-02-01T00:00:00Z`: the hospital answers with its records as they stood
+then; with none, with each record's latest version).
+
+## Versions and the world's date
+
+A patient file is a FHIR R4 Bundle of one of two types:
+
+- **`collection`**: plain records, one entry `{ "resource": … }` each. A plain
+  record has one version, is there at every date, and is served exactly as
+  written, never stamped with a version.
+- **`history`**: each entry is one version of a record, with `request` and
+  `response`; `response.lastModified` is when it was recorded. A deletion is an
+  entry with no `resource` and a `DELETE` request.
+
+With `asOf`, search, read, vread (`<type>/<id>/_history/<vid>`) and instance
+history (`<type>/<id>/_history`, with `_since` and `_at`) answer with each
+record's latest version recorded at or before it. A record deleted by then reads
+as 410; the sign-in page says the date and lists only the patients there then.
+`versionsOf` and `recordsAt` read a patient file the same way, and bad data or a
+bad `asOf` throws `HospitalDataError` with its reason. A deletion never shows in
+a pod: a pull carries what is there, so a record deleted at the hospital stays
+in the pod as it was last pulled (arrival A8).
+
+[`rulings.md`](rulings.md) records each choice the hospital makes against FHIR
+and SMART, with the text it follows and the test that pins it. `npm run
+validate:data` (Docker, a network) checks every version of every record against
+FHIR R4 and US Core with the HL7 validator.
 
 ## Not security
 
@@ -48,7 +76,7 @@ restarts in the middle of a sign-in loses nothing.
 data/
   cascade-north/
     hospital.json        name, sign-in page colour (optional, dark), FHIR base, page size, key, types, references left out of searches
-    patients/<id>.json   one patient's record there, as a FHIR R4 Bundle
+    patients/<id>.json   one patient's record there, as a FHIR R4 Bundle (collection or history)
   cascade-south/
     ...
 ```
