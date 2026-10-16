@@ -669,7 +669,10 @@ function period(text: string): { start: number; end: number } | undefined {
         : month !== undefined
           ? Date.UTC(year!, month, 1)
           : Date.UTC(year! + 1, 0, 1);
-    if (day !== undefined && new Date(start).getUTCDate() !== day) {
+    if (
+      year! < 1000 ||
+      (day !== undefined && new Date(start).getUTCDate() !== day)
+    ) {
       return undefined;
     }
     return { start, end };

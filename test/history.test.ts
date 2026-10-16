@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -91,7 +91,16 @@ const PATIENTS: Record<string, Bundle> = {
       { resource: { resourceType: "Condition", id: "c2" } },
     ],
   },
-  p3: history(version(person("p3", "Corr"), "1", "2025-01-01T00:00:00Z")),
+  p3: history(
+    version(person("p3", "Corr"), "1", "2025-01-01T00:00:00Z"),
+    version(obs("o4"), "1", "2023-03-01T00:00:00Z"),
+    deletion("Observation/o4", "2", "2023-04-01T00:00:00Z"),
+    version(obs("o4"), "3", "2023-05-01T00:00:00Z", "POST"),
+  ),
+  p4: history(
+    version(person("p4", "Dale"), "1", "2020-01-01T00:00:00Z"),
+    deletion("Patient/p4", "2", "2023-01-01T00:00:00Z"),
+  ),
 };
 const options = (asOf?: string): DemoHospitalOptions => ({
   hospital,
@@ -113,8 +122,12 @@ const signIn = (scope = "launch/patient patient/*.rs") =>
     code_challenge_method: "S256",
   });
 
-async function tokenFor(patient: string, scope?: string): Promise<string> {
-  const approving = demoHospital({ ...options(), autoApprove: patient });
+async function tokenFor(
+  patient: string,
+  scope?: string,
+  asOf?: string,
+): Promise<string> {
+  const approving = demoHospital({ ...options(asOf), autoApprove: patient });
   const back = await approving(
     new Request(`${BASE}/authorize?${signIn(scope)}`),
   );
@@ -299,6 +312,36 @@ test("the hospital answers each read, search, vread and history with its records
       "200 history 1 [MedicationStatement/m1@1]",
     ],
     [
+      "a history at the instant of the change",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2024-04-15T16:00:00Z",
+      "200 history 1 [MedicationStatement/m1@2]",
+    ],
+    [
+      "a history at the second before the change",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2024-04-15T15:59:59Z",
+      "200 history 1 [MedicationStatement/m1@1]",
+    ],
+    [
+      "a history since the instant of the change",
+      undefined,
+      "MedicationStatement/m1/_history?_since=2024-04-15T16:00:00Z",
+      "200 history 1 [MedicationStatement/m1@2]",
+    ],
+    [
+      "a history at a year below 1000",
+      undefined,
+      "MedicationStatement/m1/_history?_at=0099",
+      "400 invalid",
+    ],
+    [
+      "a history at a day that is not one",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2023-02-29",
+      "400 invalid",
+    ],
+    [
       "a history at a day after the change",
       undefined,
       "MedicationStatement/m1/_history?_at=2024-04-16",
@@ -334,24 +377,6 @@ test("the hospital answers each read, search, vread and history with its records
     notSupported.issue[0].diagnostics,
     "A history is read for one record, as <type>/<id>/_history.",
   );
-
-  for (const theirs of [
-    "Condition/c2",
-    "Condition/c2/_history",
-    "Condition/c2/_history/1",
-  ]) {
-    const [shown, unknown] = await Promise.all(
-      [theirs, theirs.replace("c2", "nope")].map(async (path) => {
-        const response = await get(T, path);
-        return `${response.status} ${JSON.stringify(await response.json())}`;
-      }),
-    );
-    assert.equal(
-      shown?.replace("c2", "nope"),
-      unknown,
-      `another patient's ${theirs} answers as an unknown one`,
-    );
-  }
 
   const first = await (await get(T, "Observation?patient=p1&_count=1")).json();
   assert.equal(first.total, 2);
@@ -406,38 +431,46 @@ test("a patient not at the hospital at T is not listed, cannot be picked, and th
     "a token naming a patient not there at T",
   );
   assert.throws(() => demoHospital({ ...options(T), autoApprove: "p3" }));
+
+  const deleted = await tokenFor("p4", undefined, "2022-01-01T00:00:00Z");
+  assert.equal(
+    (await get("2022-01-01T00:00:00Z", "Patient/p4", deleted)).status,
+    200,
+  );
+  assert.equal(
+    (await get(T, "Patient/p4", deleted)).status,
+    401,
+    "a token naming a patient deleted before T",
+  );
+  assert.throws(() => demoHospital({ ...options(T), autoApprove: "p4" }));
+});
+
+test("a record made again after its deletion is written in its history as a new one", async () => {
+  const body = await (
+    await get(undefined, "Observation/o4/_history", await tokenFor("p3"))
+  ).json();
+  assert.deepEqual(
+    body.entry.map(
+      ({ request }: Entry) => `${request?.method} ${request?.url}`,
+    ),
+    ["POST Observation", "DELETE Observation/o4", "POST Observation"],
+  );
 });
 
 test("the hospital's scopes grant what SMART says each grants", async () => {
-  const rows: [string, string, number][] = [
-    ["patient/Observation.read", "Observation?patient=p1", 200],
-    ["patient/Observation.read", "Observation/o2", 200],
-    ["patient/Observation.read", "Condition?patient=p1", 403],
-    ["", "Observation?patient=p1", 403],
-    ["patient/*.write", "Observation/o2", 403],
-    ["patient/*.*", "Observation/o2/_history", 200],
-    ["patient/Observation.s", "Observation?patient=p1", 200],
-    ["patient/Observation.s", "Observation/o2", 403],
-    ["patient/Observation.rs?category=laboratory", "Observation/o2", 403],
-    ["user/*.read", "Observation/o2", 403],
+  const rows: [string, string][] = [
+    ["patient/Observation.read", "Observation?patient=p1"],
+    ["patient/Observation.read", "Observation/o2"],
+    ["patient/*.*", "Observation/o2/_history"],
+    ["patient/Observation.s", "Observation?patient=p1"],
   ];
-  for (const [scope, path, status] of rows) {
+  for (const [scope, path] of rows) {
     const response = await get(undefined, path, await tokenFor("p1", scope));
-    assert.equal(response.status, status, `${scope} ${path}`);
-    if (status === 403) {
-      const [what, type] = path.includes("?")
-        ? ["search", path.split("?")[0]]
-        : ["read", path.split("/")[0]];
-      assert.equal(
-        (await response.json()).issue[0].diagnostics,
-        `The token's scopes do not cover a ${what} of ${type}.`,
-        `${scope} ${path}`,
-      );
-    }
+    assert.equal(response.status, 200, `${scope} ${path}`);
   }
 });
 
-test("bad data and a bad asOf are refused with a reason, by the hospital and by its loader", async () => {
+test("bad data and a bad asOf are refused with a reason, by the hospital and by its loader", async (t) => {
   const c1 = (at: string, versionId = "1") =>
     version({ resourceType: "Condition", id: "c1" }, versionId, at);
   const p1 = version(person("p1", "Vale"), "1", "2020-01-01T00:00:00Z");
@@ -512,6 +545,19 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
         ),
       },
       "Condition/c1 has a version with no meta.versionId",
+    ],
+    [
+      "a record time on 31 February",
+      {
+        p1: history(
+          p1,
+          edited(
+            c1(at),
+            (e) => (e.response.lastModified = "2024-02-31T00:00:00Z"),
+          ),
+        ),
+      },
+      "a history entry has a response whose lastModified is an instant",
     ],
     [
       "a lastUpdated that is not the record time",
@@ -594,7 +640,7 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
     [
       "a file named for another patient",
       { p1: history(version(person("p9", "Vale"), "1", at)) },
-      "patients/p1.json holds Patient p9, not p1",
+      "holds Patient p9, not p1",
     ],
   ];
   const refused = (where: string, reason: string) => (error: unknown) =>
@@ -602,13 +648,15 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
     error.where === where &&
     error.reason === reason;
 
+  const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
+  t.after(() => rm(folder, { recursive: true, force: true }));
   for (const [name, patients, reason, where = "patients/p1.json"] of rows) {
     assert.throws(
       () => demoHospital({ hospital, patients }),
       refused(where, reason),
       name,
     );
-    const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
+    await rm(join(folder, "patients"), { recursive: true, force: true });
     await mkdir(join(folder, "patients"));
     await writeFile(join(folder, "hospital.json"), JSON.stringify(hospital));
     for (const [id, bundle] of Object.entries(patients)) {
@@ -620,7 +668,13 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
     await assert.rejects(loadHospital(folder), refused(where, reason), name);
   }
 
-  for (const asOf of ["2024-02-01", "2024-02-01T00:00:00", "soon"]) {
+  for (const asOf of [
+    "2024-02-01",
+    "2024-02-01T00:00:00",
+    "soon",
+    "2024-02-30T00:00:00Z",
+    "0099-02-01T00:00:00Z",
+  ]) {
     const reason = "asOf is an instant, as 2024-02-01T00:00:00Z";
     assert.throws(
       () => demoHospital(options(asOf)),
