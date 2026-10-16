@@ -1,14 +1,28 @@
-import { readdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { patientRecords } from "../history.js";
+import { HospitalDataError, patientRecords, versionsOf } from "../history.js";
 import type { Bundle, Hospital, Story } from "../index.js";
+import { hospitalId } from "../route.js";
+import {
+  compileShorthand,
+  hasShorthand,
+  type ShorthandBundle,
+} from "../shorthand.js";
 
-const DATA = fileURLToPath(new URL("../../../data/", import.meta.url));
+/** The package's own hospitals: a folder of hospital folders, each `hospital.json` and its `patients/`. */
+export const DATA_FOLDER = fileURLToPath(
+  new URL("../../../data/", import.meta.url),
+);
 /** Where the stories' written answers and C-CDA copies are, outside `data/` so no hospital serves them. */
 export const STORIES = fileURLToPath(
   new URL("../../../stories/", import.meta.url),
 );
+
+export type LoadedHospital = {
+  hospital: Hospital;
+  patients: Record<string, Bundle>;
+};
 
 export async function loadStories(): Promise<Story[]> {
   return JSON.parse(
@@ -16,33 +30,139 @@ export async function loadStories(): Promise<Story[]> {
   ) as Story[];
 }
 
-export async function loadHospital(
-  folder: string,
-): Promise<{ hospital: Hospital; patients: Record<string, Bundle> }> {
-  const root = resolve(DATA, folder);
+/** What `path` is, by asking the file system about it: reading a folder as a file fails differently on each system. */
+async function kind(path: string): Promise<"folder" | "file" | undefined> {
+  try {
+    const found = await stat(path);
+    return found.isDirectory() ? "folder" : found.isFile() ? "file" : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A hospital's folder, read as it is: `hospital.json`, and the `.json` files of `patients/` if it has any. */
+export async function loadHospital(folder: string): Promise<LoadedHospital> {
+  const root = resolve(DATA_FOLDER, folder);
+  if ((await kind(join(root, "hospital.json"))) !== "file")
+    throw new HospitalDataError(
+      "hospital.json",
+      `${root} holds no hospital.json`,
+    );
   const hospital = JSON.parse(
     await readFile(join(root, "hospital.json"), "utf8"),
   ) as Hospital;
   const patients: Record<string, Bundle> = {};
-  for (const file of (await readdir(join(root, "patients"))).sort()) {
-    if (!file.endsWith(".json")) continue;
-    patients[file.slice(0, -".json".length)] = JSON.parse(
-      await readFile(join(root, "patients", file), "utf8"),
-    ) as Bundle;
-  }
+  const folderOfPatients = join(root, "patients");
+  if ((await kind(folderOfPatients)) === "folder")
+    for (const file of (await readdir(folderOfPatients)).sort()) {
+      if (
+        !file.endsWith(".json") ||
+        (await kind(join(folderOfPatients, file))) !== "file"
+      )
+        continue;
+      patients[file.slice(0, -".json".length)] = JSON.parse(
+        await readFile(join(folderOfPatients, file), "utf8"),
+      ) as Bundle;
+    }
   patientRecords(hospital.fhirBase, patients);
   return { hospital, patients };
 }
 
-/** Every hospital in `data/`, in its folders' order, as `demoFetch` takes them. */
-export async function loadHospitals(): Promise<
-  { hospital: Hospital; patients: Record<string, Bundle> }[]
-> {
-  const hospitals: { hospital: Hospital; patients: Record<string, Bundle> }[] =
-    [];
-  for (const entry of (await readdir(DATA, { withFileTypes: true })).sort(
-    (a, b) => (a.name < b.name ? -1 : 1),
-  ))
-    if (entry.isDirectory()) hospitals.push(await loadHospital(entry.name));
+function idOf(hospital: Hospital): string {
+  try {
+    return hospitalId({ hospital, patients: {} });
+  } catch (error) {
+    throw new HospitalDataError(
+      "hospital.json",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+/**
+ * Every hospital in the folders given (the package's own by default), as `demoFetch` takes them: roots in order, then
+ * each root's hospital folders by name. A root that is not a folder is skipped, and so is a file where a hospital
+ * folder would be. Two hospitals with one id throw.
+ */
+export async function loadHospitals(
+  roots: readonly string[] = [DATA_FOLDER],
+): Promise<LoadedHospital[]> {
+  const hospitals: LoadedHospital[] = [];
+  const taken = new Set<string>();
+  for (const root of roots) {
+    if ((await kind(root)) !== "folder") continue;
+    for (const name of (await readdir(root)).sort()) {
+      const folder = join(root, name);
+      if ((await kind(folder)) !== "folder") continue;
+      const loaded = await loadHospital(folder);
+      const id = idOf(loaded.hospital);
+      if (taken.has(id))
+        throw new HospitalDataError("hospital.json", `two hospitals at ${id}`);
+      taken.add(id);
+      hospitals.push(loaded);
+    }
+  }
   return hospitals;
+}
+
+/**
+ * Checks a patient file as the hospital at `folder` (relative to the working folder) would load it, and writes it as
+ * `patients/<id>.json`, `<id>` being its Patient's. The file is a plain or history Bundle, written as it is, or an
+ * authoring file with `shorthand`, compiled first. Refuses a patient who is already there. Gives the path written.
+ */
+export async function addPatient(
+  folder: string,
+  file: string,
+): Promise<string> {
+  const where = basename(file);
+  let bundle: Bundle;
+  try {
+    bundle = JSON.parse(await readFile(resolve(file), "utf8")) as Bundle;
+  } catch (error) {
+    throw new HospitalDataError(
+      where,
+      error instanceof SyntaxError
+        ? "is not JSON"
+        : `cannot be read: ${(error as Error).message}`,
+    );
+  }
+  if (bundle.resourceType !== "Bundle")
+    throw new HospitalDataError(where, "is not a Bundle");
+  if (hasShorthand(bundle))
+    bundle = compileShorthand(bundle as ShorthandBundle, where);
+  const held = [...versionsOf(bundle, where).keys()]
+    .filter((record) => record.startsWith("Patient/"))
+    .map((record) => record.slice("Patient/".length));
+  if (held.length !== 1)
+    throw new HospitalDataError(
+      where,
+      held.length === 0
+        ? "holds no Patient"
+        : `holds ${held.length} Patients: a patient's file holds one`,
+    );
+  const [id] = held as [string];
+  const root = resolve(folder);
+  const { hospital, patients } = await loadHospital(root);
+  const name = `patients/${id}.json`;
+  if (id in patients)
+    throw new HospitalDataError(
+      name,
+      "is already in this hospital: remove it first, or give the patient another id",
+    );
+  const records = patientRecords(hospital.fhirBase, {
+    ...patients,
+    [id]: bundle,
+  }).get(id);
+  for (const record of records?.keys() ?? []) {
+    const type = record.slice(0, record.indexOf("/"));
+    if (!hospital.types.includes(type))
+      throw new HospitalDataError(
+        name,
+        `${record} is a ${type}, which hospital.json does not list in types`,
+      );
+  }
+  const path = join(root, name);
+  await mkdir(join(root, "patients"), { recursive: true });
+  await writeFile(path, `${JSON.stringify(bundle, null, 2)}\n`, { flag: "wx" });
+  return path;
 }
