@@ -124,6 +124,8 @@ const resources = [
   encounter("e1", "busy", "2020-01-01"),
   encounter("e2", "busy", "2021-06-01"),
   encounter("e3", "other", "2022-03-01"),
+  encounter("e4", "other", "2022-09-01"),
+  encounter("e5", "busy", "2021-09-01"),
   { resourceType: "Claim", id: "claim", patient: { reference: "urn:uuid:p" } },
   {
     resourceType: "DiagnosticReport",
@@ -168,6 +170,8 @@ const resources = [
 const rows = [
   row("2020-01-01T10:00:00Z", "2021-01-01T00:00:00Z", "111"),
   row("2020-01-01T10:00:00Z", "2020-03-01T00:00:00Z", "222"),
+  row("2020-01-01T10:00:00Z", "2020-04-01T00:00:00Z", "222", "e2"),
+  row("2020-06-01T00:00:00Z", "2020-09-01T00:00:00Z", "222"),
   row("2020-01-01T10:15:00Z", "2020-01-01T10:15:00Z", "333"),
   row("2020-01-01T10:00:00Z", "2023-06-01T00:00:00Z", "444"),
 ];
@@ -245,8 +249,8 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
       assert.ok(names.has(match[1]!), match[1]);
     }
   }
-  assert.equal(new Set(of(north, "Encounter").map((e) => e.id)).size, 2);
-  assert.equal(of(south, "Encounter").length, 1);
+  assert.equal(new Set(of(north, "Encounter").map((e) => e.id)).size, 3);
+  assert.equal(of(south, "Encounter").length, 2);
   assert.equal(of(north, "Observation").length, 0);
   assert.equal(of(north, "Procedure").length, 1);
   assert.equal(of(south, "Procedure").length, 0);
