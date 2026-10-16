@@ -9,6 +9,7 @@
     "Patient",
     "AllergyIntolerance",
     "Condition",
+    "DiagnosticReport",
     "Encounter",
     "Immunization",
     "MedicationRequest",
