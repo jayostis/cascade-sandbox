@@ -1,10 +1,20 @@
 import { createHash } from "node:crypto";
-import type { Bundle, Hospital, Resource } from "../index.js";
+import type { Bundle, BundleEntry, Hospital, Resource } from "../index.js";
 
 export const OBSERVATION_CATEGORIES = ["laboratory", "vital-signs"];
 const PROVIDER_TYPES = ["Organization", "Location"];
 const MAIDEN_NAME =
   "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName";
+const SYNTHEA_EXTENSIONS = "http://synthetichealth.github.io/synthea/";
+const RECONCILED = ["AllergyIntolerance", "MedicationRequest", "Condition"];
+
+/** One row of Synthea's `csv/medications.csv`, the only place an order's stop is dated. */
+export interface MedicationRow {
+  start: string;
+  stop: string;
+  encounter: string;
+  code: string;
+}
 
 export interface HospitalFolder {
   folder: string;
@@ -34,6 +44,22 @@ export function syntheaId(folder: string, synthea: string): string {
 
 export function withoutDigits(text: string): string {
   return text.replace(/(\p{L})\d+/gu, "$1");
+}
+
+const MEDICATION_COLUMNS = "START,STOP,PATIENT,PAYER,ENCOUNTER,CODE,";
+
+/** A person's rows. The first six columns hold no quotes or commas. */
+export function medicationRows(csv: string, patient: string): MedicationRow[] {
+  const [header, ...lines] = csv.split(/\r?\n/);
+  if (!header?.startsWith(MEDICATION_COLUMNS)) {
+    throw new Error(`medications.csv does not begin ${MEDICATION_COLUMNS}…`);
+  }
+  return lines.flatMap((line) => {
+    const [start, stop, who, , encounter, code] = line.split(",");
+    return who === patient
+      ? [{ start: start!, stop: stop!, encounter: encounter!, code: code! }]
+      : [];
+  });
 }
 
 export function bundleText(bundle: Bundle): string {
@@ -69,9 +95,16 @@ export function providerDetails(providers: Resource[]): Removed {
   };
 }
 
+/** A record at one hospital and the instants (ms) of its versions: one, or its first and its stop. */
+interface Placed {
+  resource: Resource;
+  times: number[];
+}
+
 export function fromSynthea(
   bundle: Bundle,
   hospitals: HospitalFolder[],
+  medications: MedicationRow[],
 ): PatientFile[] {
   const [home, away] = hospitals;
   if (!home) throw new Error("A person needs at least one hospital");
@@ -81,7 +114,7 @@ export function fromSynthea(
   const resources = (bundle.entry ?? []).flatMap(
     (entry) => entry.resource ?? [],
   );
-  const medications = new Map(
+  const drugs = new Map(
     resources
       .filter((resource) => resource.resourceType === "Medication")
       .map((resource) => [resource.id, resource.code]),
@@ -106,41 +139,90 @@ export function fromSynthea(
       !away || providerKey(encounter) === busiest ? home : away,
     ]),
   );
+  const startsAt = new Map(
+    hospitals.map((hospital) => [
+      hospital,
+      encounters
+        .filter((encounter) => encounterAt.get(encounter.id) === hospital)
+        .map((encounter) => Date.parse(String(period(encounter).start)))
+        .sort((a, b) => a - b),
+    ]),
+  );
 
-  const placed = new Map<HospitalFolder, Resource[]>(
+  const placed = new Map<HospitalFolder, Placed[]>(
     hospitals.map((hospital) => [hospital, []]),
   );
   for (const resource of kept) {
+    if (resource === patient) {
+      for (const hospital of hospitals) {
+        if (holds(hospital, resource)) {
+          placed.get(hospital)?.push({ resource, times: [] });
+        }
+      }
+      continue;
+    }
     const encounter =
       resource.resourceType === "Encounter"
         ? resource.id
         : uuidOf((resource.encounter as Json | undefined)?.reference);
-    const at = encounter ? encounterAt.get(encounter) : undefined;
+    const at = (encounter && encounterAt.get(encounter)) || home;
+    const first = recordedAt(resource);
+    const stop = stoppedAt(resource, kept, medications, drugs);
     for (const hospital of hospitals) {
-      if (
-        holds(hospital, resource) &&
-        (!at || at === hospital || reconciled(resource))
-      ) {
-        placed.get(hospital)?.push(resource);
+      if (!holds(hospital, resource)) continue;
+      let from: number | undefined = first;
+      if (at !== hospital) {
+        // A reconciled record reaches the other hospital when a visit there
+        // finds it active.
+        from = RECONCILED.includes(resource.resourceType)
+          ? startsAt
+              .get(hospital)
+              ?.find(
+                (start) =>
+                  start >= first && (stop === undefined || start < stop),
+              )
+          : undefined;
+      }
+      if (from !== undefined) {
+        placed.get(hospital)?.push({
+          resource,
+          times: stop !== undefined && stop > from ? [from, stop] : [from],
+        });
       }
     }
   }
 
   return hospitals.map((hospital) => {
     const here = placed.get(hospital) ?? [];
+    const earliest = Math.min(...here.flatMap((each) => each.times));
+    if (!Number.isFinite(earliest)) {
+      throw new Error(
+        `${hospital.folder} holds no record of the Synthea person`,
+      );
+    }
+    for (const each of here) {
+      if (each.resource === patient) each.times = [earliest];
+    }
     const ids = new Map(
-      here.map((resource) => [
+      here.map(({ resource }) => [
         resource.id,
         `${resource.resourceType}/${syntheaId(hospital.folder, resource.id)}`,
       ]),
     );
-    const entry = here.map((resource) => ({
-      resource: rewrite(resource, hospital, ids, medications),
-    }));
+    const entry = here.flatMap(({ resource, times }) => {
+      const final = rewrite(resource, hospital, ids, drugs);
+      return times.map((time, index) =>
+        versionEntry(
+          index === 0 && times.length > 1 ? earlier(final) : final,
+          index + 1,
+          time,
+        ),
+      );
+    });
     return {
       folder: hospital.folder,
       id: syntheaId(hospital.folder, patient.id),
-      bundle: { resourceType: "Bundle" as const, type: "collection", entry },
+      bundle: { resourceType: "Bundle" as const, type: "history", entry },
     };
   });
 }
@@ -150,6 +232,7 @@ function holds(hospital: HospitalFolder, resource: Resource): boolean {
 }
 
 function keep(resource: Resource): boolean {
+  if (resource.resourceType === "DiagnosticReport") return false;
   if (resource.resourceType !== "Observation") return true;
   const codes = categoryCodes(resource);
   return (
@@ -166,17 +249,132 @@ function categoryCodes(resource: Resource): string[] {
   );
 }
 
-function reconciled(resource: Resource): boolean {
-  if (resource.resourceType === "AllergyIntolerance") return true;
-  if (resource.resourceType === "MedicationRequest") {
-    return resource.status === "active";
+function period(resource: Resource): Json {
+  return (resource.period as Json | undefined) ?? {};
+}
+
+/** The instant a record's final content first holds. */
+function recordedAt(resource: Resource): number {
+  const dates: Record<string, unknown> = {
+    MedicationRequest: resource.authoredOn,
+    Condition: resource.recordedDate,
+    AllergyIntolerance: resource.recordedDate,
+    Observation: resource.issued,
+    Immunization: resource.occurrenceDateTime,
+    Procedure: (resource.performedPeriod as Json | undefined)?.end,
+    Encounter: period(resource).end,
+  };
+  const at = Date.parse(String(dates[resource.resourceType]));
+  if (Number.isNaN(at)) {
+    throw new Error(
+      `${resource.resourceType}/${resource.id} has no date to be first recorded at`,
+    );
   }
+  return at;
+}
+
+/** The instant a record changed after it was first recorded, if it did. */
+function stoppedAt(
+  resource: Resource,
+  all: Resource[],
+  rows: MedicationRow[],
+  drugs: Map<string, unknown>,
+): number | undefined {
+  const name = `${resource.resourceType}/${resource.id}`;
   if (resource.resourceType === "Condition") {
-    const status = resource.clinicalStatus as Json | undefined;
-    const coding = (status?.coding as Json[] | undefined)?.[0];
-    return coding?.code === "active";
+    const code = clinicalCode(resource);
+    if (code === "active") return undefined;
+    const abated = Date.parse(String(resource.abatementDateTime));
+    if (Number.isNaN(abated)) {
+      throw new Error(`${name} is ${code}, but gives no abatementDateTime`);
+    }
+    return abated;
   }
-  return false;
+  if (resource.resourceType !== "MedicationRequest") return undefined;
+  if (resource.status === "active") return undefined;
+  const code = drugCode(resource, drugs);
+  const authored = Date.parse(String(resource.authoredOn));
+  const row = rows.filter(
+    (each) =>
+      each.encounter ===
+        uuidOf((resource.encounter as Json | undefined)?.reference) &&
+      each.code === code &&
+      Date.parse(each.start) === authored,
+  );
+  const stop = row.length === 1 ? Date.parse(row[0]!.stop) : NaN;
+  if (Number.isNaN(stop)) {
+    throw new Error(
+      `${name} is ${String(resource.status)}, but medications.csv gives it no stop`,
+    );
+  }
+  // A renewal of the same drug replaces the order before its stop.
+  const renewals = all
+    .filter(
+      (other) =>
+        other.resourceType === "MedicationRequest" &&
+        drugCode(other, drugs) === code &&
+        Date.parse(String(other.authoredOn)) > authored,
+    )
+    .map((other) => Date.parse(String(other.authoredOn)));
+  return Math.min(stop, ...renewals);
+}
+
+function clinicalCode(condition: Resource): unknown {
+  const status = condition.clinicalStatus as Json | undefined;
+  return (status?.coding as Json[] | undefined)?.[0]?.code;
+}
+
+function drugCode(order: Resource, drugs: Map<string, unknown>): unknown {
+  const concept =
+    order.medicationCodeableConcept ??
+    drugs.get(
+      uuidOf((order.medicationReference as Json | undefined)?.reference) ?? "",
+    );
+  return ((concept as Json | undefined)?.coding as Json[] | undefined)?.[0]
+    ?.code;
+}
+
+/** The record as it stood before its change: an order not yet stopped, a condition not yet abated. */
+function earlier(resource: Resource): Resource {
+  if (resource.resourceType === "MedicationRequest") {
+    return { ...resource, status: "active" };
+  }
+  const copy = structuredClone(resource) as Json;
+  delete copy.abatementDateTime;
+  const coding = ((copy.clinicalStatus as Json).coding as Json[])[0]!;
+  coding.code = "active";
+  if ("display" in coding) coding.display = "Active";
+  return copy as Resource;
+}
+
+function versionEntry(
+  resource: Resource,
+  version: number,
+  time: number,
+): BundleEntry {
+  const recorded = new Date(time).toISOString();
+  const created = version === 1;
+  return {
+    resource: {
+      ...resource,
+      meta: {
+        ...(resource.meta as Json | undefined),
+        versionId: String(version),
+        lastUpdated: recorded,
+      },
+    },
+    request: {
+      method: created ? "POST" : "PUT",
+      url: created
+        ? resource.resourceType
+        : `${resource.resourceType}/${resource.id}`,
+    },
+    response: {
+      status: created ? "201" : "200",
+      lastModified: recorded,
+      etag: `W/"${version}"`,
+    },
+  };
 }
 
 function providerKey(encounter: Resource): string {
@@ -194,7 +392,7 @@ function rewrite(
   resource: Resource,
   hospital: HospitalFolder,
   ids: Map<string, string>,
-  medications: Map<string, unknown>,
+  drugs: Map<string, unknown>,
 ): Resource {
   const copy = structuredClone(resource) as Json;
   const reference = ids.get(resource.id) ?? "";
@@ -209,11 +407,16 @@ function rewrite(
       },
     ];
     copy.name = stripDigits(copy.name);
-    for (const extension of (copy.extension as Json[] | undefined) ?? []) {
+    const extensions = ((copy.extension as Json[] | undefined) ?? []).filter(
+      (extension) => !String(extension.url).startsWith(SYNTHEA_EXTENSIONS),
+    );
+    for (const extension of extensions) {
       if (extension.url === MAIDEN_NAME) {
         extension.valueString = stripDigits(extension.valueString);
       }
     }
+    if (extensions.length > 0) copy.extension = extensions;
+    else delete copy.extension;
   } else {
     delete copy.identifier;
   }
@@ -221,12 +424,12 @@ function rewrite(
     (copy.medicationReference as Json | undefined)?.reference,
   );
   if (medication !== undefined) {
-    if (!medications.has(medication)) {
+    if (!drugs.has(medication)) {
       throw new Error(
         `MedicationRequest/${resource.id} names a Medication not in the bundle`,
       );
     }
-    copy.medicationCodeableConcept = medications.get(medication);
+    copy.medicationCodeableConcept = drugs.get(medication);
     delete copy.medicationReference;
   }
   return pruned(copy, hospital, ids) as Resource;

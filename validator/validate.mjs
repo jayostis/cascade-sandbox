@@ -94,21 +94,37 @@ async function* inputs() {
     }
     for (const [patient, bundle] of Object.entries(patients)) {
       const base = hospital.fhirBase.replace(/\/$/, "");
+      const all = versionsOf(bundle, patient);
+      // The validator cannot resolve a reference to a record that has two entries, so the whole file is
+      // checked with each record's newest version; every version is checked on its own below.
+      const newest = new Map(
+        [...all].map(([record, versions]) => [
+          record,
+          versions.at(-1).versionId,
+        ]),
+      );
       yield [
         `${at}__${patient}.json`,
         {
           ...bundle,
-          entry: bundle.entry.map((entry) =>
-            entry.fullUrl || !entry.resource
-              ? entry
-              : {
-                  fullUrl: `${base}/${entry.resource.resourceType}/${entry.resource.id}`,
-                  ...entry,
-                },
-          ),
+          entry: bundle.entry
+            .filter(
+              ({ resource }) =>
+                !resource ||
+                newest.get(`${resource.resourceType}/${resource.id}`) ===
+                  (resource.meta?.versionId ?? "1"),
+            )
+            .map((entry) =>
+              entry.fullUrl || !entry.resource
+                ? entry
+                : {
+                    fullUrl: `${base}/${entry.resource.resourceType}/${entry.resource.id}`,
+                    ...entry,
+                  },
+            ),
         },
       ];
-      for (const versions of versionsOf(bundle, patient).values()) {
+      for (const versions of all.values()) {
         for (const { record, versionId, resource } of versions) {
           if (!resource) continue;
           const name = `${at}__${patient}__${record.replace("/", "-")}__${versionId}.json`;

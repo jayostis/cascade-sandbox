@@ -14,7 +14,9 @@ use or test the demo hospitals. This folder says how to make it again.
 - `synthea.properties`: Synthea's settings. One thread, so a run is
   reproducible; ten years of history; FHIR R4 only, plus the hospital and
   practitioner files, which are read to list the real provider details in
-  `removed.json` and never committed.
+  `removed.json` and never committed; and the CSV export, of which only
+  `csv/medications.csv` is read, for the date an order stopped, and nothing from
+  it is committed.
 - `people.json`: who is chosen, and at which hospitals. A person at two
   hospitals is split by provider: the provider with the most encounters goes to
   the first.
@@ -34,7 +36,7 @@ docker run --rm \
   eclipse-temurin:21-jre@sha256:cff19e6215689161eb6162c11b86b0c60ddf802164f2eaf48d570f8fb79a36c5 \
   bash -c 'curl -sSL -o /tmp/synthea.jar https://github.com/synthetichealth/synthea/releases/download/v4.0.0/synthea-with-dependencies.jar \
     && echo "ed43c20ad40ba5c3bc724503a5af032715fe3c491620b766148e7c2361e6ecc1  /tmp/synthea.jar" | sha256sum -c - \
-    && java -jar /tmp/synthea.jar -c /synthea/synthea.properties -s 90 -cs 90 -r 20261001 -p 40 -a 45-80 Washington'
+    && java -jar /tmp/synthea.jar -c /synthea/synthea.properties -s 90 -cs 90 -r 20261001 -e 20261001 -p 40 -a 45-80 Washington'
 npm run synthea -w @cascade-runtime/demo-hospital -- "$PWD/build/synthea"
 ```
 
@@ -42,16 +44,22 @@ Synthea writes 40 people, of whom three are kept. `npm run synthea` replaces
 every `data/*/patients/syn-*.json` and `removed.json`; `git status` then shows
 no change.
 
+The run is one run. Two runs with one seed and two end dates do not give the
+same people cut at two dates: the ten-year window slides with `-e`, and the
+random stream diverges after the earlier date. So the end date is pinned, and a
+hospital is given a past by cutting this one run by date.
+
 ## What the post-processing does
 
 `src/node/synthea.ts`, for each chosen person:
 
 1. keeps the types each hospital's `hospital.json` lists, and drops the rest,
-   Claim and ExplanationOfBenefit among them;
+   Claim and ExplanationOfBenefit among them, and DiagnosticReport whatever
+   `types` says (Synthea's carry their note text as base64);
 2. keeps only `laboratory` and `vital-signs` Observations;
-3. splits a person at two hospitals by provider, and refuses a third; active
-   Conditions, active MedicationRequests and allergies go to both, as a
-   hospital reconciles them at intake;
+3. splits a person at two hospitals by provider, and refuses a third; a record
+   of a visit goes to that visit's hospital, and the three kinds a hospital
+   reconciles at intake may be copied to the other (see "Versions");
 4. names each record `syn-` and 16 hex digits of SHA-256 of the hospital's
    folder and Synthea's id, so each hospital has its own ids;
 5. turns `urn:uuid:` references into `Type/id`, removes those to records not
@@ -60,5 +68,45 @@ no change.
 6. replaces every organization's and location's name with the hospital's, and
    strips Synthea's digits from people's names;
 7. gives the Patient one identifier, the hospital's MRN, and removes Synthea's
-   identifiers and narratives from every record;
-8. writes one `collection` Bundle per patient, one entry per line.
+   identifiers and narratives from every record, and from the Patient the
+   extensions of `synthetichealth.github.io` (the quality- and
+   disability-adjusted life years are running totals at the end date, not
+   dated facts);
+8. writes one `history` Bundle per patient, one entry per line.
+
+## Versions
+
+Every change a served record makes is dated by Synthea's own output. A record
+has the instant its final content first holds as its first version
+(`response.lastModified` and `meta.lastUpdated`, versions `"1"` and `"2"`, a
+`POST` then a `PUT`).
+
+- **First version.** MedicationRequest `authoredOn`; Condition and
+  AllergyIntolerance `recordedDate`; Observation `issued`; Immunization
+  `occurrenceDateTime`; Procedure `performedPeriod.end`; Encounter `period.end`.
+- **A change after it is a second version.** A completed MedicationRequest
+  stops at the earlier of its `STOP` in `csv/medications.csv` (the row of its
+  encounter, RxNorm code and `START` equal to `authoredOn`) and the next
+  `authoredOn` of an order of the same code, which replaces it. Its first
+  version has `status` `active`; its second, at the stop, is the record as
+  Synthea wrote it. A resolved Condition's first version is `active` with no
+  `abatementDateTime`; its second, at the `abatementDateTime`, is the record as
+  written. A change at or before the first version's instant is no second
+  version: the record is as written.
+- **A change nothing dates is refused.** `fromSynthea` throws rather than state
+  at one date what was not yet true then.
+- **The Patient** has one version, at the earliest instant of any other version
+  in its file, so a patient is at the hospital whenever one of their records is.
+- **A copy to the other hospital.** An AllergyIntolerance, MedicationRequest or
+  Condition goes to the other hospital only if a visit there finds it active: an
+  Encounter `period.start` at or after the record's first version and, when it
+  stops, before the stop. The copy's first version is at that `period.start`; it
+  keeps the stop. A record with no encounter (an allergy) is at the first
+  hospital of `people.json`, at its own date, and is copied by the same rule.
+
+## World dates
+
+A hospital cut at any T answers as of T. The run's ten-year window starts on
+2016-10-01 and ends on 2026-10-01 (`-e`): between them the Synthea people's
+records are complete. Before 2016-10-01 a hospital holds only what Synthea kept
+from then, so the earlier past is thin.

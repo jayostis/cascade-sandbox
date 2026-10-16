@@ -115,6 +115,93 @@ test("every patient file keeps the hospitals' data rules", async () => {
   assert.ok(atBoth.length >= 2, "patient A and the Synthea person at both");
 });
 
+/** The instant a record's final content first holds, by its type. */
+function firstHeld(record: Resource): number | undefined {
+  const dates: Record<string, unknown> = {
+    MedicationRequest: record.authoredOn,
+    Condition: record.recordedDate,
+    AllergyIntolerance: record.recordedDate,
+    Observation: record.issued,
+    Immunization: record.occurrenceDateTime,
+    Procedure: (record.performedPeriod as { end?: string } | undefined)?.end,
+    Encounter: (record.period as { end?: string } | undefined)?.end,
+  };
+  const at = Date.parse(String(dates[record.resourceType]));
+  return Number.isNaN(at) ? undefined : at;
+}
+
+test("a Synthea patient is a history cut by the dates Synthea gave: a record is first held when its final content holds, and only an order stopped or a condition abated has a second version", async () => {
+  let files = 0;
+  for (const folder of FOLDERS) {
+    const { patients } = await loadHospital(folder);
+    for (const [patient, bundle] of Object.entries(patients)) {
+      if (!patient.startsWith("syn-")) continue;
+      files++;
+      const where = `${folder}/${patient}`;
+      assert.equal(bundle.type, "history", where);
+      const versions = versionsOf(bundle, where);
+      const all = [...versions.values()].flat();
+      const patientAt = Date.parse(
+        [...versions.entries()].find(([key]) =>
+          key.startsWith("Patient/"),
+        )![1][0]!.recorded!,
+      );
+      const visits = all
+        .filter(({ record }) => record.startsWith("Encounter/"))
+        .map(({ resource }) =>
+          Date.parse(String((resource!.period as { start: string }).start)),
+        );
+      for (const [key, list] of versions) {
+        const name = `${where} ${key}`;
+        const [first, second, ...rest] = list;
+        assert.deepEqual(rest, [], `${name} has at most two versions`);
+        for (const version of list) {
+          assert.ok(Date.parse(version.recorded!) >= patientAt, name);
+        }
+        const record = first!.resource!;
+        if (record.resourceType !== "Patient") {
+          const held = firstHeld(record);
+          const at = Date.parse(first!.recorded!);
+          assert.ok(
+            at === held || visits.includes(at),
+            `${name}: version 1 is neither when it was first held nor a visit there`,
+          );
+        }
+        if (!second) continue;
+        const later = second.resource!;
+        const state = (each: Resource) =>
+          each.resourceType === "MedicationRequest"
+            ? each.status
+            : (each.clinicalStatus as { coding: { code: string }[] }).coding[0]!
+                .code;
+        assert.ok(
+          ["MedicationRequest", "Condition"].includes(record.resourceType),
+          name,
+        );
+        assert.equal(state(record), "active", name);
+        assert.notEqual(state(later), "active", name);
+        assert.ok(!("abatementDateTime" in record), name);
+        if (record.resourceType === "Condition") {
+          assert.equal(
+            Date.parse(second.recorded!),
+            Date.parse(String(later.abatementDateTime)),
+            name,
+          );
+        }
+      }
+      const text = JSON.stringify(bundle);
+      assert.ok(!text.includes("synthetichealth.github.io"), where);
+      assert.ok(
+        all.every(
+          ({ resource }) => resource?.resourceType !== "DiagnosticReport",
+        ),
+        where,
+      );
+    }
+  }
+  assert.equal(files, 4);
+});
+
 function codings(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(codings);
   if (!value || typeof value !== "object") return [];

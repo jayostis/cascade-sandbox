@@ -5,6 +5,7 @@ import type { Bundle, Hospital, Resource } from "../index.js";
 import {
   bundleText,
   fromSynthea,
+  medicationRows,
   providerDetails,
   type HospitalFolder,
   type PatientFile,
@@ -47,6 +48,7 @@ async function main(output: string): Promise<void> {
     hospitals.set(folder, { folder, hospital });
   }
 
+  const stops = await readFile(join(output, "csv", "medications.csv"), "utf8");
   const results: PatientFile[] = [];
   for (const person of people) {
     const file = files.find((name) => name.endsWith(`_${person.synthea}.json`));
@@ -55,6 +57,7 @@ async function main(output: string): Promise<void> {
       ...fromSynthea(
         await readJson<Bundle>(join(fhir, file)),
         person.hospitals.map((folder) => hospitals.get(folder)!),
+        medicationRows(stops, person.synthea),
       ),
     );
   }
