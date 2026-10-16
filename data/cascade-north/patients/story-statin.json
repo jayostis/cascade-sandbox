@@ -39,6 +39,26 @@
     },
     {
       "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "story-statin-med-2",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+              "code": "197658",
+              "display": "estradiol 1 MG Oral Tablet"
+            }
+          ],
+          "text": "Estradiol 1 mg tablet"
+        },
+        "subject": { "reference": "Patient/story-statin" },
+        "authoredOn": "2019-04-01"
+      }
+    },
+    {
+      "resource": {
         "resourceType": "Observation",
         "id": "story-statin-ldl-1",
         "status": "final",
