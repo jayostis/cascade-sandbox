@@ -40,17 +40,62 @@ async function kind(path: string): Promise<"folder" | "file" | undefined> {
   }
 }
 
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+async function readJson(path: string, where: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new HospitalDataError(
+      where,
+      `is not JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/** Refuses a file that is not a Bundle-shaped object whose entries are objects, before anything reads inside it. */
+function checkBundle(value: unknown, where: string): Bundle {
+  if (!isObject(value)) throw new HospitalDataError(where, "is not an object");
+  const { entry } = value;
+  if (
+    entry !== undefined &&
+    (!Array.isArray(entry) ||
+      entry.some(
+        (one) =>
+          !isObject(one) ||
+          (one.resource !== undefined && !isObject(one.resource)),
+      ))
+  )
+    throw new HospitalDataError(
+      where,
+      "has an entry that is not an object, or whose resource is not",
+    );
+  return value as unknown as Bundle;
+}
+
+function checkHospital(value: unknown): Hospital {
+  const where = "hospital.json";
+  if (!isObject(value)) throw new HospitalDataError(where, "is not an object");
+  for (const field of ["name", "fhirBase"])
+    if (typeof value[field] !== "string")
+      throw new HospitalDataError(where, `has no ${field}, a string`);
+  if (
+    !Array.isArray(value.types) ||
+    value.types.some((type) => typeof type !== "string")
+  )
+    throw new HospitalDataError(where, "has no types, a list of strings");
+  return value as unknown as Hospital;
+}
+
 /** A hospital's folder, read as it is: `hospital.json`, and the `.json` files of `patients/` if it has any. */
 export async function loadHospital(folder: string): Promise<LoadedHospital> {
   const root = resolve(DATA_FOLDER, folder);
   if ((await kind(join(root, "hospital.json"))) !== "file")
-    throw new HospitalDataError(
-      "hospital.json",
-      `${root} holds no hospital.json`,
-    );
-  const hospital = JSON.parse(
-    await readFile(join(root, "hospital.json"), "utf8"),
-  ) as Hospital;
+    throw new HospitalDataError("hospital.json", "is not there");
+  const hospital = checkHospital(
+    await readJson(join(root, "hospital.json"), "hospital.json"),
+  );
   const patients: Record<string, Bundle> = {};
   const folderOfPatients = join(root, "patients");
   if ((await kind(folderOfPatients)) === "folder")
@@ -60,9 +105,11 @@ export async function loadHospital(folder: string): Promise<LoadedHospital> {
         (await kind(join(folderOfPatients, file))) !== "file"
       )
         continue;
-      patients[file.slice(0, -".json".length)] = JSON.parse(
-        await readFile(join(folderOfPatients, file), "utf8"),
-      ) as Bundle;
+      const where = `patients/${file}`;
+      patients[file.slice(0, -".json".length)] = checkBundle(
+        await readJson(join(folderOfPatients, file), where),
+        where,
+      );
     }
   patientRecords(hospital.fhirBase, patients);
   return { hospital, patients };
@@ -94,8 +141,16 @@ export async function loadHospitals(
     for (const name of (await readdir(root)).sort()) {
       const folder = join(root, name);
       if ((await kind(folder)) !== "folder") continue;
-      const loaded = await loadHospital(folder);
-      const id = idOf(loaded.hospital);
+      let loaded: LoadedHospital;
+      let id: string;
+      try {
+        loaded = await loadHospital(folder);
+        id = idOf(loaded.hospital);
+      } catch (error) {
+        if (error instanceof HospitalDataError)
+          throw new HospitalDataError(`${name}/${error.where}`, error.reason);
+        throw error;
+      }
       if (taken.has(id))
         throw new HospitalDataError("hospital.json", `two hospitals at ${id}`);
       taken.add(id);
@@ -115,17 +170,22 @@ export async function addPatient(
   file: string,
 ): Promise<string> {
   const where = basename(file);
-  let bundle: Bundle;
+  let text: string;
   try {
-    bundle = JSON.parse(await readFile(resolve(file), "utf8")) as Bundle;
+    text = await readFile(resolve(file), "utf8");
   } catch (error) {
     throw new HospitalDataError(
       where,
-      error instanceof SyntaxError
-        ? "is not JSON"
-        : `cannot be read: ${(error as Error).message}`,
+      `cannot be read: ${(error as Error).message}`,
     );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new HospitalDataError(where, "is not JSON");
+  }
+  let bundle = checkBundle(parsed, where);
   if (bundle.resourceType !== "Bundle")
     throw new HospitalDataError(where, "is not a Bundle");
   if (hasShorthand(bundle))
@@ -141,6 +201,11 @@ export async function addPatient(
         : `holds ${held.length} Patients: a patient's file holds one`,
     );
   const [id] = held as [string];
+  if (!/^[A-Za-z0-9\-.]{1,64}$/.test(id))
+    throw new HospitalDataError(
+      where,
+      `holds Patient ${id}, which is not a FHIR id`,
+    );
   const root = resolve(folder);
   const { hospital, patients } = await loadHospital(root);
   const name = `patients/${id}.json`;
@@ -158,7 +223,7 @@ export async function addPatient(
     if (!hospital.types.includes(type))
       throw new HospitalDataError(
         name,
-        `${record} is a ${type}, which hospital.json does not list in types`,
+        `${record} is ${/^[AEIOU]/.test(type) ? "an" : "a"} ${type}, which hospital.json does not list in types`,
       );
   }
   const path = join(root, name);

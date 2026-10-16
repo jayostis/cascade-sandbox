@@ -168,7 +168,14 @@ export function compileShorthand(file: ShorthandBundle, where: string): Bundle {
   }[] = [];
   const seen = new Set<string>();
   for (const entry of file.entry ?? []) {
-    const { resource, shorthand = {} } = entry;
+    const { resource } = entry;
+    const shorthand = entry.shorthand === undefined ? {} : entry.shorthand;
+    if (
+      typeof shorthand !== "object" ||
+      shorthand === null ||
+      Array.isArray(shorthand)
+    )
+      throw refuse("a shorthand is an object of active and stopped");
     if (resource === undefined) continue;
     const record = `${resource.resourceType}/${resource.id}`;
     if (seen.has(record)) throw refuse(`a collection holds ${record} twice`);

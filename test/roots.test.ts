@@ -80,7 +80,23 @@ test("a list of folders is refused where two hospitals share an id or one is not
     }),
   );
   await mkdir(join(work, "empty", "no-hospital"), { recursive: true });
-  const rows: [string, string[], string][] = [
+  const mine = async (
+    name: string,
+    hospital: string | undefined,
+    patient?: string,
+  ) => {
+    const root = join(work, "mine", name);
+    await mkdir(join(root, "mine", "patients"), { recursive: true });
+    if (hospital !== undefined)
+      await writeFile(join(root, "mine", "hospital.json"), hospital);
+    if (patient !== undefined)
+      await writeFile(join(root, "mine", "patients", "p1.json"), patient);
+    return [root];
+  };
+  const ok = JSON.stringify(hospitalAt("mine"));
+  const noFhirBase = JSON.stringify({ ...hospitalAt("mine"), fhirBase: null });
+  const notJson = /^mine\/(hospital|patients\/p1)\.json: is not JSON: /;
+  const rows: [string, string[], string | RegExp][] = [
     [
       "one id in two roots",
       [ROOT_A, ROOT_C],
@@ -89,22 +105,62 @@ test("a list of folders is refused where two hospitals share an id or one is not
     [
       "a base that is no demo host",
       [bad],
-      "hospital.json: somewhere test hospital's FHIR base is not on a demo.invalid host",
+      "somewhere/hospital.json: somewhere test hospital's FHIR base is not on a demo.invalid host",
+    ],
+    [
+      "a folder with no hospital.json",
+      [join(work, "empty")],
+      "no-hospital/hospital.json: is not there",
+    ],
+    [
+      "a hospital.json that is no JSON",
+      await mine("badjson", "{ nope"),
+      notJson,
+    ],
+    [
+      "a hospital.json with no fhirBase",
+      await mine("nobase", noFhirBase),
+      "mine/hospital.json: has no fhirBase, a string",
+    ],
+    [
+      "a hospital.json with no types",
+      await mine(
+        "notypes",
+        JSON.stringify({ ...hospitalAt("mine"), types: undefined }),
+      ),
+      "mine/hospital.json: has no types, a list of strings",
+    ],
+    [
+      "a hospital.json that is a list",
+      await mine("list", "[]"),
+      "mine/hospital.json: is not an object",
+    ],
+    [
+      "a patient file that is no JSON",
+      await mine("badpatient", ok, "{"),
+      notJson,
+    ],
+    [
+      "a patient file that is null",
+      await mine("nullpatient", ok, "null"),
+      "mine/patients/p1.json: is not an object",
+    ],
+    [
+      "a patient file with a null entry",
+      await mine("nullentry", ok, '{"entry":[null]}'),
+      "mine/patients/p1.json: has an entry that is not an object, or whose resource is not",
     ],
   ];
   for (const [name, roots, message] of rows)
     await assert.rejects(
       loadHospitals(roots),
       (error) =>
-        error instanceof HospitalDataError && error.message === message,
+        error instanceof HospitalDataError &&
+        (typeof message === "string"
+          ? error.message === message
+          : message.test(error.message)),
       name,
     );
-  await assert.rejects(
-    loadHospitals([join(work, "empty")]),
-    (error) =>
-      error instanceof HospitalDataError &&
-      error.reason.endsWith("holds no hospital.json"),
-  );
 });
 
 const PERSON = {
@@ -193,7 +249,35 @@ test("a patient file is checked against the hospital and written once, a shortha
           { resource: { resourceType: "Observation", id: "o" } },
         ],
       }),
-      "patients/unserved.json: Observation/o is a Observation, which hospital.json does not list in types",
+      "patients/unserved.json: Observation/o is an Observation, which hospital.json does not list in types",
+    ],
+    [
+      "a Patient id that is no FHIR id",
+      await write("escape.json", {
+        resourceType: "Bundle",
+        type: "collection",
+        entry: [{ resource: { ...PERSON, id: "../../escaped" } }],
+      }),
+      "escape.json: holds Patient ../../escaped, which is not a FHIR id",
+    ],
+    [
+      "a file that is null",
+      await write("null.json", "null"),
+      "null.json: is not an object",
+    ],
+    [
+      "a null entry",
+      await write("nullentry.json", { resourceType: "Bundle", entry: [null] }),
+      "nullentry.json: has an entry that is not an object, or whose resource is not",
+    ],
+    [
+      "a null shorthand",
+      await write("nullshort.json", {
+        resourceType: "Bundle",
+        type: "collection",
+        entry: [{ resource: PERSON, shorthand: null }],
+      }),
+      "nullshort.json: a shorthand is an object of active and stopped",
     ],
     [
       "a record another patient holds",
