@@ -78,7 +78,9 @@ export function fromSynthea(
   if (hospitals.length > 2) {
     throw new Error("A person is split across at most two hospitals");
   }
-  const resources = (bundle.entry ?? []).map((entry) => entry.resource);
+  const resources = (bundle.entry ?? []).flatMap(
+    (entry) => entry.resource ?? [],
+  );
   const medications = new Map(
     resources
       .filter((resource) => resource.resourceType === "Medication")

@@ -1,0 +1,632 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import {
+  type Bundle,
+  type BundleEntry,
+  type DemoHospitalOptions,
+  demoHospital,
+  HospitalDataError,
+  type Resource,
+  recordsAt,
+} from "../src/index.js";
+import { loadHospital } from "../src/node/index.js";
+
+const { hospital } = await loadHospital("cascade-north");
+const BASE = hospital.fhirBase;
+const T = "2024-02-01T00:00:00Z";
+
+function version(
+  resource: Resource,
+  versionId: string,
+  at: string,
+  method: "POST" | "PUT" = versionId === "1" ? "POST" : "PUT",
+): BundleEntry {
+  const record = `${resource.resourceType}/${resource.id}`;
+  return {
+    resource: { ...resource, meta: { versionId, lastUpdated: at } },
+    request: {
+      method,
+      url: method === "POST" ? resource.resourceType : record,
+    },
+    response: {
+      status: method === "POST" ? "201" : "200",
+      lastModified: at,
+      etag: `W/"${versionId}"`,
+    },
+  };
+}
+
+function deletion(record: string, versionId: string, at: string): BundleEntry {
+  return {
+    request: { method: "DELETE", url: record },
+    response: { status: "204", lastModified: at, etag: `W/"${versionId}"` },
+  };
+}
+
+const history = (...entry: BundleEntry[]): Bundle => ({
+  resourceType: "Bundle",
+  type: "history",
+  entry,
+});
+
+const person = (id: string, family: string): Resource => ({
+  resourceType: "Patient",
+  id,
+  name: [{ family, given: ["Ana"] }],
+});
+const med = (status: string): Resource => ({
+  resourceType: "MedicationStatement",
+  id: "m1",
+  status,
+});
+const obs = (id: string): Resource => ({
+  resourceType: "Observation",
+  id,
+  status: "final",
+});
+
+const PATIENTS: Record<string, Bundle> = {
+  p1: history(
+    version(med("completed"), "2", "2024-04-15T16:00:00Z"),
+    version(person("p1", "Vale"), "1", "2020-01-01T00:00:00Z"),
+    version(med("active"), "1", "2022-03-01T00:00:00Z"),
+    version(obs("o1"), "1", "2023-01-01T00:00:00Z"),
+    version(obs("o2"), "1", "2023-02-01T00:00:00Z"),
+    deletion("Observation/o1", "2", "2024-05-01T00:00:00Z"),
+    version(
+      { resourceType: "Condition", id: "c1" },
+      "1",
+      "2025-01-01T00:00:00Z",
+    ),
+  ),
+  p2: {
+    resourceType: "Bundle",
+    type: "collection",
+    entry: [
+      { resource: person("p2", "Brook") },
+      { resource: { resourceType: "Condition", id: "c2" } },
+    ],
+  },
+  p3: history(version(person("p3", "Corr"), "1", "2025-01-01T00:00:00Z")),
+};
+const options = (asOf?: string): DemoHospitalOptions => ({
+  hospital,
+  patients: PATIENTS,
+  ...(asOf === undefined ? {} : { asOf }),
+});
+
+const REDIRECT = "https://app.example/callback";
+const VERIFIER = "a-verifier-long-enough-to-be-a-real-pkce-code-verifier-0123";
+
+const signIn = (scope = "launch/patient patient/*.rs") =>
+  new URLSearchParams({
+    response_type: "code",
+    client_id: "test-app",
+    redirect_uri: REDIRECT,
+    scope,
+    aud: BASE,
+    code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+    code_challenge_method: "S256",
+  });
+
+async function tokenFor(patient: string, scope?: string): Promise<string> {
+  const approving = demoHospital({ ...options(), autoApprove: patient });
+  const back = await approving(
+    new Request(`${BASE}/authorize?${signIn(scope)}`),
+  );
+  const code =
+    new URL(back.headers.get("Location") ?? "").searchParams.get("code") ?? "";
+  const answer = await approving(
+    new Request(`${BASE}/token`, {
+      method: "POST",
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT,
+        client_id: "test-app",
+        code_verifier: VERIFIER,
+      }),
+    }),
+  );
+  return (await answer.json()).access_token;
+}
+
+const token = await tokenFor("p1");
+
+function get(asOf: string | undefined, path: string, bearer = token) {
+  return demoHospital(options(asOf))(
+    new Request(`${BASE}/${path}`, {
+      headers: { Authorization: `Bearer ${bearer}` },
+    }),
+  );
+}
+
+type Entry = {
+  resource?: Resource & { meta?: { versionId?: string } };
+  request?: { method: string; url: string };
+};
+
+/** An answer in short: `200 <type>/<id>@<version>`, a Bundle's entries in its order, or `<status> <issue code>`. */
+async function answered(response: Response): Promise<string> {
+  const body = await response.json();
+  const of = ({ resource, request }: Entry) =>
+    resource
+      ? `${resource.resourceType}/${resource.id}@${resource.meta?.versionId ?? "-"}`
+      : `${request?.method} ${request?.url}`;
+  if (body.resourceType === "OperationOutcome") {
+    return `${response.status} ${body.issue[0].code}`;
+  }
+  if (body.resourceType === "Bundle") {
+    const entries = (body.entry as Entry[]).map(of).join(", ");
+    return `${response.status} ${body.type} ${body.total} [${entries}]`;
+  }
+  return `${response.status} ${of({ resource: body })}`;
+}
+
+test("the hospital answers each read, search, vread and history with its records as they stood at T", async () => {
+  const BEFORE = "2021-01-01T00:00:00Z";
+  const AFTER = "2024-06-01T00:00:00Z";
+  const rows: [string, string | undefined, string, string][] = [
+    [
+      "a record before it was made",
+      BEFORE,
+      "MedicationStatement/m1",
+      "404 not-found",
+    ],
+    [
+      "a record between its versions",
+      T,
+      "MedicationStatement/m1",
+      "200 MedicationStatement/m1@1",
+    ],
+    [
+      "a record at its version's record time",
+      "2024-04-15T16:00:00Z",
+      "MedicationStatement/m1",
+      "200 MedicationStatement/m1@2",
+    ],
+    [
+      "a record after its last version",
+      AFTER,
+      "MedicationStatement/m1",
+      "200 MedicationStatement/m1@2",
+    ],
+    [
+      "a record with no T",
+      undefined,
+      "MedicationStatement/m1",
+      "200 MedicationStatement/m1@2",
+    ],
+    ["a record deleted at T", AFTER, "Observation/o1", "410 deleted"],
+    [
+      "a search of what is present at T",
+      T,
+      "MedicationStatement?patient=p1",
+      "200 searchset 1 [MedicationStatement/m1@1]",
+    ],
+    [
+      "a search omits a record deleted at T",
+      AFTER,
+      "Observation?patient=p1",
+      "200 searchset 1 [Observation/o2@1]",
+    ],
+    [
+      "a search omits a record made after T",
+      T,
+      "Condition?patient=p1",
+      "200 searchset 0 []",
+    ],
+    [
+      "a vread of a version at T",
+      T,
+      "MedicationStatement/m1/_history/1",
+      "200 MedicationStatement/m1@1",
+    ],
+    [
+      "a vread of a version after T",
+      T,
+      "MedicationStatement/m1/_history/2",
+      "404 not-found",
+    ],
+    [
+      "a vread of an unknown version",
+      undefined,
+      "MedicationStatement/m1/_history/9",
+      "404 not-found",
+    ],
+    [
+      "a vread of a deletion",
+      AFTER,
+      "Observation/o1/_history/2",
+      "410 deleted",
+    ],
+    [
+      "a vread of another patient's record",
+      undefined,
+      "Condition/c2/_history/1",
+      "404 not-found",
+    ],
+    [
+      "a history, newest first",
+      undefined,
+      "MedicationStatement/m1/_history",
+      "200 history 2 [MedicationStatement/m1@2, MedicationStatement/m1@1]",
+    ],
+    [
+      "a history at T",
+      T,
+      "MedicationStatement/m1/_history",
+      "200 history 1 [MedicationStatement/m1@1]",
+    ],
+    [
+      "a history holding a deletion",
+      undefined,
+      "Observation/o1/_history",
+      "200 history 2 [DELETE Observation/o1, Observation/o1@1]",
+    ],
+    [
+      "a history since an instant",
+      undefined,
+      "MedicationStatement/m1/_history?_since=2024-01-01T00:00:00Z",
+      "200 history 1 [MedicationStatement/m1@2]",
+    ],
+    [
+      "a history since a date",
+      undefined,
+      "MedicationStatement/m1/_history?_since=2024-01-01",
+      "400 invalid",
+    ],
+    [
+      "a history since a time with no timezone",
+      undefined,
+      "MedicationStatement/m1/_history?_since=2024-01-01T00:00:00",
+      "400 invalid",
+    ],
+    [
+      "a history at a year in which both versions were current",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2024",
+      "200 history 2 [MedicationStatement/m1@2, MedicationStatement/m1@1]",
+    ],
+    [
+      "a history at a year before the change",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2023",
+      "200 history 1 [MedicationStatement/m1@1]",
+    ],
+    [
+      "a history at a day after the change",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2024-04-16",
+      "200 history 1 [MedicationStatement/m1@2]",
+    ],
+    [
+      "a history with _at and _since",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2024&_since=2024-04-01T00:00:00Z",
+      "200 history 1 [MedicationStatement/m1@2]",
+    ],
+    [
+      "a history at a month that is not one",
+      undefined,
+      "MedicationStatement/m1/_history?_at=2024-13",
+      "400 invalid",
+    ],
+    [
+      "a history of a record absent at T",
+      T,
+      "Condition/c1/_history",
+      "404 not-found",
+    ],
+    ["a type's history", undefined, "Condition/_history", "404 not-supported"],
+    ["the system's history", undefined, "_history", "404 not-supported"],
+  ];
+  for (const [name, asOf, path, expected] of rows) {
+    assert.equal(await answered(await get(asOf, path)), expected, name);
+  }
+
+  const notSupported = await (await get(T, "Condition/_history")).json();
+  assert.equal(
+    notSupported.issue[0].diagnostics,
+    "A history is read for one record, as <type>/<id>/_history.",
+  );
+
+  for (const theirs of [
+    "Condition/c2",
+    "Condition/c2/_history",
+    "Condition/c2/_history/1",
+  ]) {
+    const [shown, unknown] = await Promise.all(
+      [theirs, theirs.replace("c2", "nope")].map(async (path) => {
+        const response = await get(T, path);
+        return `${response.status} ${JSON.stringify(await response.json())}`;
+      }),
+    );
+    assert.equal(
+      shown?.replace("c2", "nope"),
+      unknown,
+      `another patient's ${theirs} answers as an unknown one`,
+    );
+  }
+
+  const first = await (await get(T, "Observation?patient=p1&_count=1")).json();
+  assert.equal(first.total, 2);
+  const next: string = first.link.find(
+    (link: { relation: string }) => link.relation === "next",
+  ).url;
+  assert.ok(!next.includes("2024"), "T is never in a link");
+  assert.equal(
+    await answered(await get(T, next.slice(BASE.length + 1))),
+    "200 searchset 2 [Observation/o2@1]",
+  );
+});
+
+test("a patient not at the hospital at T is not listed, cannot be picked, and their token and auto-approval are refused", async () => {
+  const pageAt = async (asOf?: string) =>
+    (
+      await demoHospital(options(asOf))(
+        new Request(`${BASE}/authorize?${signIn()}`),
+      )
+    ).text();
+  const page = await pageAt(T);
+  assert.equal(
+    /<p class="as-of">[^<]*<time datetime="([^"]*)">1 February 2024<\/time>/.exec(
+      page,
+    )?.[1],
+    T,
+  );
+  assert.deepEqual(
+    [...page.matchAll(/<label class="choice">[^>]*> ([^<]*)<\/label>/g)].map(
+      ([, name]) => name,
+    ),
+    ["Brook, Ana", "Vale, Ana"],
+  );
+  const plain = await pageAt();
+  assert.ok(!plain.includes('class="as-of"'));
+  assert.ok(plain.includes("Corr, Ana"));
+
+  const picked = await demoHospital(options(T))(
+    new Request(`${BASE}/authorize`, {
+      method: "POST",
+      body: new URLSearchParams(`${signIn()}&patient=p3&decision=allow`),
+    }),
+  );
+  assert.equal(
+    new URL(picked.headers.get("Location") ?? "").searchParams.get("error"),
+    "access_denied",
+  );
+  const theirs = await tokenFor("p3");
+  assert.equal(
+    (await get(T, "Patient/p3", theirs)).status,
+    401,
+    "a token naming a patient not there at T",
+  );
+  assert.throws(() => demoHospital({ ...options(T), autoApprove: "p3" }));
+});
+
+test("the hospital's scopes grant what SMART says each grants", async () => {
+  const rows: [string, string, number][] = [
+    ["patient/Observation.read", "Observation?patient=p1", 200],
+    ["patient/Observation.read", "Observation/o2", 200],
+    ["patient/Observation.read", "Condition?patient=p1", 403],
+    ["", "Observation?patient=p1", 403],
+    ["patient/*.write", "Observation/o2", 403],
+    ["patient/*.*", "Observation/o2/_history", 200],
+    ["patient/Observation.s", "Observation?patient=p1", 200],
+    ["patient/Observation.s", "Observation/o2", 403],
+    ["patient/Observation.rs?category=laboratory", "Observation/o2", 403],
+    ["user/*.read", "Observation/o2", 403],
+  ];
+  for (const [scope, path, status] of rows) {
+    const response = await get(undefined, path, await tokenFor("p1", scope));
+    assert.equal(response.status, status, `${scope} ${path}`);
+    if (status === 403) {
+      const [what, type] = path.includes("?")
+        ? ["search", path.split("?")[0]]
+        : ["read", path.split("/")[0]];
+      assert.equal(
+        (await response.json()).issue[0].diagnostics,
+        `The token's scopes do not cover a ${what} of ${type}.`,
+        `${scope} ${path}`,
+      );
+    }
+  }
+});
+
+test("bad data and a bad asOf are refused with a reason, by the hospital and by its loader", async () => {
+  const c1 = (at: string, versionId = "1") =>
+    version({ resourceType: "Condition", id: "c1" }, versionId, at);
+  const p1 = version(person("p1", "Vale"), "1", "2020-01-01T00:00:00Z");
+  const at = "2024-01-01T00:00:00Z";
+  const later = "2024-02-01T00:00:00Z";
+  type Editable = {
+    request: Record<string, unknown>;
+    response: Record<string, unknown>;
+    resource: { meta: Record<string, unknown> };
+  };
+  const edited = (entry: BundleEntry, change: (copy: Editable) => void) => {
+    const copy = structuredClone(entry);
+    change(copy as unknown as Editable);
+    return copy;
+  };
+  const rows: [string, Record<string, Bundle>, string, string?][] = [
+    [
+      "a searchset",
+      { p1: { resourceType: "Bundle", type: "searchset", entry: [p1] } },
+      "a patient file is a Bundle of type collection or history, not searchset",
+    ],
+    [
+      "a collection holding a record twice",
+      {
+        p1: {
+          resourceType: "Bundle",
+          type: "collection",
+          entry: [
+            { resource: person("p1", "Vale") },
+            { resource: person("p1", "Vale") },
+          ],
+        },
+      },
+      "a collection holds Patient/p1 twice",
+    ],
+    [
+      "a PATCH",
+      {
+        p1: history(
+          p1,
+          edited(c1(at), (e) => (e.request.method = "PATCH")),
+        ),
+      },
+      "a history entry has a request whose method is POST, PUT or DELETE",
+    ],
+    [
+      "a PUT to another record",
+      {
+        p1: history(
+          p1,
+          edited(c1(at, "2"), (e) => (e.request.url = "Condition/c9")),
+        ),
+      },
+      "request.url is not <type>/<id> of its resource",
+    ],
+    [
+      "a record time that is a date",
+      {
+        p1: history(
+          p1,
+          edited(c1(at), (e) => (e.response.lastModified = "2024-01-01")),
+        ),
+      },
+      "a history entry has a response whose lastModified is an instant",
+    ],
+    [
+      "a version with no versionId",
+      {
+        p1: history(
+          p1,
+          edited(c1(at), (e) => delete e.resource.meta.versionId),
+        ),
+      },
+      "Condition/c1 has a version with no meta.versionId",
+    ],
+    [
+      "a lastUpdated that is not the record time",
+      {
+        p1: history(
+          p1,
+          edited(c1(at), (e) => (e.resource.meta.lastUpdated = later)),
+        ),
+      },
+      "Condition/c1 version 1: meta.lastUpdated is not the entry's response.lastModified",
+    ],
+    [
+      "an etag of another version",
+      {
+        p1: history(
+          p1,
+          edited(c1(at), (e) => (e.response.etag = 'W/"2"')),
+        ),
+      },
+      'Condition/c1 version 1: the etag is not W/"1"',
+    ],
+    [
+      "a version id used twice",
+      { p1: history(p1, c1(at), c1(later)) },
+      "Condition/c1 reuses version 1",
+    ],
+    [
+      "two versions at one time",
+      { p1: history(p1, c1(at), c1(at, "2")) },
+      `Condition/c1 has two versions at ${at}`,
+    ],
+    [
+      "a deletion with no etag",
+      {
+        p1: history(
+          p1,
+          c1(at),
+          edited(
+            deletion("Condition/c1", "2", later),
+            (e) => delete e.response.etag,
+          ),
+        ),
+      },
+      "Condition/c1 is deleted with a resource, or with no etag",
+    ],
+    [
+      "a deletion with a resource",
+      {
+        p1: history(p1, c1(at), {
+          ...deletion("Condition/c1", "2", later),
+          resource: { resourceType: "Condition", id: "c1" },
+        }),
+      },
+      "Condition/c1 is deleted with a resource, or with no etag",
+    ],
+    [
+      "a deletion of a record that does not exist",
+      { p1: history(p1, deletion("Condition/c1", "1", at)) },
+      "Condition/c1 is deleted while it does not exist",
+    ],
+    [
+      "a fullUrl at another base",
+      {
+        p1: history(p1, {
+          ...c1(at),
+          fullUrl: "https://elsewhere.example/fhir/Condition/c1",
+        }),
+      },
+      `fullUrl https://elsewhere.example/fhir/Condition/c1 is not ${BASE}/Condition/c1`,
+    ],
+    [
+      "a record in two files",
+      {
+        p1: history(p1, c1(at)),
+        p2: history(version(person("p2", "Brook"), "1", at), c1(at)),
+      },
+      "Condition/c1 is in two patient files",
+      "patients/p2.json",
+    ],
+    [
+      "a file named for another patient",
+      { p1: history(version(person("p9", "Vale"), "1", at)) },
+      "patients/p1.json holds Patient p9, not p1",
+    ],
+  ];
+  const refused = (where: string, reason: string) => (error: unknown) =>
+    error instanceof HospitalDataError &&
+    error.where === where &&
+    error.reason === reason;
+
+  for (const [name, patients, reason, where = "patients/p1.json"] of rows) {
+    assert.throws(
+      () => demoHospital({ hospital, patients }),
+      refused(where, reason),
+      name,
+    );
+    const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
+    await mkdir(join(folder, "patients"));
+    await writeFile(join(folder, "hospital.json"), JSON.stringify(hospital));
+    for (const [id, bundle] of Object.entries(patients)) {
+      await writeFile(
+        join(folder, "patients", `${id}.json`),
+        JSON.stringify(bundle),
+      );
+    }
+    await assert.rejects(loadHospital(folder), refused(where, reason), name);
+  }
+
+  for (const asOf of ["2024-02-01", "2024-02-01T00:00:00", "soon"]) {
+    const reason = "asOf is an instant, as 2024-02-01T00:00:00Z";
+    assert.throws(
+      () => demoHospital(options(asOf)),
+      refused("asOf", reason),
+      asOf,
+    );
+    assert.throws(() => recordsAt(PATIENTS.p1!, asOf), refused("asOf", reason));
+  }
+});

@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { patientRecords } from "../history.js";
 import type { Bundle, Hospital, Story } from "../index.js";
 
 const DATA = fileURLToPath(new URL("../../../data/", import.meta.url));
@@ -25,20 +26,11 @@ export async function loadHospital(
   const patients: Record<string, Bundle> = {};
   for (const file of (await readdir(join(root, "patients"))).sort()) {
     if (!file.endsWith(".json")) continue;
-    const id = file.slice(0, -".json".length);
-    const bundle = JSON.parse(
+    patients[file.slice(0, -".json".length)] = JSON.parse(
       await readFile(join(root, "patients", file), "utf8"),
     ) as Bundle;
-    const held = bundle.entry?.find(
-      (entry) => entry.resource.resourceType === "Patient",
-    )?.resource.id;
-    if (held !== id) {
-      throw new Error(
-        `patients/${file} holds Patient ${held ?? "(none)"}, not ${id}`,
-      );
-    }
-    patients[id] = bundle;
   }
+  patientRecords(hospital.fhirBase, patients);
   return { hospital, patients };
 }
 

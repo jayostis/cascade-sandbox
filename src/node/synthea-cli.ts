@@ -32,7 +32,9 @@ async function main(output: string): Promise<void> {
       name.startsWith("practitionerInformation"),
   )) {
     const bundle = await readJson<Bundle>(join(fhir, file));
-    providers.push(...(bundle.entry ?? []).map((entry) => entry.resource));
+    providers.push(
+      ...(bundle.entry ?? []).flatMap((entry) => entry.resource ?? []),
+    );
   }
   const people = await readJson<Person[]>(
     join(PACKAGE, "synthea", "people.json"),

@@ -1,3 +1,11 @@
+import {
+  HospitalDataError,
+  type RecordVersion,
+  isInstant,
+  patientRecords,
+  time,
+  versionsUpTo,
+} from "./history.js";
 import { Signer, sha256 } from "./signed.js";
 
 export interface Hospital {
@@ -51,10 +59,18 @@ export interface Resource {
   [field: string]: unknown;
 }
 
+export interface BundleEntry {
+  fullUrl?: string;
+  /** Absent only on a history entry whose request is a DELETE. */
+  resource?: Resource;
+  request?: { method: "POST" | "PUT" | "DELETE"; url: string };
+  response?: { status: string; lastModified?: string; etag?: string };
+}
+
 export interface Bundle {
   resourceType: "Bundle";
   type: string;
-  entry?: { resource: Resource }[];
+  entry?: BundleEntry[];
 }
 
 export interface DemoHospitalOptions {
@@ -62,7 +78,10 @@ export interface DemoHospitalOptions {
   patients: Record<string, Bundle>;
   authorizeUrl?: string;
   autoApprove?: string;
+  /** The protocol clock: when codes and tokens expire. */
   now?: () => Date;
+  /** The world's date, a FHIR instant: the hospital answers with its records as they stood then. Absent: every record's latest version. */
+  asOf?: string;
 }
 
 export type DemoHospital = (request: Request) => Promise<Response>;
@@ -83,9 +102,33 @@ const FHIR_JSON = "application/fhir+json";
 const NO_STORE = { "Cache-Control": "no-store" };
 
 export function demoHospital(options: DemoHospitalOptions): DemoHospital {
-  const { hospital } = options;
-  const patients = new Map(Object.entries(options.patients));
+  const { hospital, asOf } = options;
+  if (asOf !== undefined && !isInstant(asOf)) {
+    throw new HospitalDataError(
+      "asOf",
+      "asOf is an instant, as 2024-02-01T00:00:00Z",
+    );
+  }
   const base = hospital.fhirBase.replace(/\/$/, "");
+  const charts = new Map<string, Map<string, readonly RecordVersion[]>>();
+  for (const [patient, records] of patientRecords(base, options.patients)) {
+    const chart = new Map<string, readonly RecordVersion[]>();
+    for (const [record, versions] of records) {
+      const then = versionsUpTo(versions, asOf);
+      if (then.length > 0) chart.set(record, then);
+    }
+    if (chart.get(`Patient/${patient}`)?.at(-1)?.resource) {
+      charts.set(patient, chart);
+    }
+  }
+  const patients = new Map(
+    [...charts].map(([patient, chart]) => [
+      patient,
+      [...chart.values()].flatMap(
+        (versions) => versions.at(-1)?.resource ?? [],
+      ),
+    ]),
+  );
   const authorizeUrl = options.authorizeUrl ?? `${base}/authorize`;
   const tokenUrl = `${base}/token`;
   const now = options.now ?? (() => new Date());
@@ -173,15 +216,16 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
           `<input type="hidden" name="${name}" value="${escape(parameters.get(name) ?? "")}">`,
       )
       .join("\n      ");
-    const choices = [...patients]
+    const choices = [...patients.keys()]
+      .map((id) => ({ id, ...namesOf(personOf(id), id) }))
       .sort(
-        ([a, first], [b, second]) =>
-          namesOf(first, a).family.localeCompare(namesOf(second, b).family) ||
-          namesOf(first, a).given.localeCompare(namesOf(second, b).given),
+        (first, second) =>
+          first.family.localeCompare(second.family) ||
+          first.given.localeCompare(second.given),
       )
       .map(
-        ([id, bundle], index) =>
-          `<label class="choice"><input type="radio" name="patient" value="${escape(id)}"${index === 0 ? " checked" : ""}> ${escape(patientName(bundle, id))}</label>`,
+        ({ id, family, given }, index) =>
+          `<label class="choice"><input type="radio" name="patient" value="${escape(id)}"${index === 0 ? " checked" : ""}> ${escape([family, given].filter(Boolean).join(", "))}</label>`,
       )
       .join("\n        ");
     const scopes = (parameters.get("scope") ?? "")
@@ -194,9 +238,14 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
           : `<li>${escape(words)}<code>${escape(scope)}</code></li>`;
       })
       .join("\n        ");
+    const asOfLine =
+      asOf === undefined
+        ? ""
+        : `
+      <p class="as-of">Records as they stood on <time datetime="${escape(asOf)}">${inWords(asOf)}</time>.</p>`;
     return page(
       hospital,
-      `<h1>Sign in</h1>
+      `<h1>Sign in</h1>${asOfLine}
       <p>The app <strong>${escape(parameters.get("client_id") ?? "")}</strong> wants to connect to your record at ${escape(hospital.name)}.</p>
       <form method="post" action="${escape(authorizeUrl)}">
         ${hiddenInputs}
@@ -281,18 +330,56 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     }
     const patient = note.patient;
     const segments = url.pathname.slice(new URL(base).pathname.length);
-    const [type, id, ...rest] = segments.split("/").filter(Boolean);
-    if (!type || rest.length > 0 || !hospital.types.includes(type)) {
+    const [type, id, history, vid, ...rest] = segments
+      .split("/")
+      .filter(Boolean);
+    if (type === "_history" || id === "_history") {
+      return outcome(
+        404,
+        "not-supported",
+        "A history is read for one record, as <type>/<id>/_history.",
+      );
+    }
+    if (
+      !type ||
+      rest.length > 0 ||
+      (history !== undefined && history !== "_history") ||
+      !hospital.types.includes(type)
+    ) {
       return outcome(404, "not-found", `${hospital.name} serves no ${type}.`);
     }
-    const records = recordsOf(patient);
-    if (id !== undefined) {
-      const record = records.find(
-        (resource) => resource.resourceType === type && resource.id === id,
+    const interaction = id === undefined ? "search" : "read";
+    const scope = typeof note.scope === "string" ? note.scope : "";
+    if (!granted(scope, type).includes(interaction === "search" ? "s" : "r")) {
+      return outcome(
+        403,
+        "forbidden",
+        `The token's scopes do not cover a ${interaction} of ${type}.`,
       );
-      return record
-        ? fhirJson(200, record)
-        : outcome(404, "not-found", `No ${type}/${id}.`);
+    }
+    const records = patients.get(patient) ?? [];
+    if (id !== undefined) {
+      const record = `${type}/${id}`;
+      const versions = charts.get(patient)?.get(record) ?? [];
+      if (vid !== undefined) {
+        const version = versions.find(({ versionId }) => versionId === vid);
+        if (!version) {
+          return outcome(404, "not-found", `No ${record} version ${vid}.`);
+        }
+        return version.resource
+          ? fhirJson(200, version.resource)
+          : outcome(410, "deleted", `${record} version ${vid} is a deletion.`);
+      }
+      if (versions.length === 0) {
+        return outcome(404, "not-found", `No ${record}.`);
+      }
+      if (history !== undefined) {
+        return historyOf(type, record, versions, url.searchParams);
+      }
+      const resource = versions.at(-1)?.resource;
+      return resource
+        ? fhirJson(200, resource)
+        : outcome(410, "deleted", `${record} was deleted.`);
     }
 
     if (type === "Patient") {
@@ -361,8 +448,66 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     });
   }
 
-  function recordsOf(patient: string): Resource[] {
-    return (patients.get(patient)?.entry ?? []).map((entry) => entry.resource);
+  function historyOf(
+    type: string,
+    record: string,
+    versions: readonly RecordVersion[],
+    query: URLSearchParams,
+  ): Response {
+    const since = query.get("_since");
+    if (since !== null && !isInstant(since)) {
+      return outcome(
+        400,
+        "invalid",
+        "_since is an instant, as 2024-02-01T00:00:00Z.",
+      );
+    }
+    const at = query.get("_at");
+    const during = at === null ? undefined : period(at);
+    if (at !== null && during === undefined) {
+      return outcome(
+        400,
+        "invalid",
+        "_at is a date or a dateTime, as 2024 or 2024-02-01T00:00:00Z.",
+      );
+    }
+    const kept = versions.filter((version, index) => {
+      const from = time(version);
+      if (since !== null && !(from >= Date.parse(since))) return false;
+      if (during === undefined) return true;
+      const next = versions[index + 1];
+      const until = next === undefined ? Number.POSITIVE_INFINITY : time(next);
+      return from < during.end && until > during.start;
+    });
+    return fhirJson(200, {
+      resourceType: "Bundle",
+      type: "history",
+      total: kept.length,
+      entry: kept.reverse().map((version) => {
+        const before = versions[versions.indexOf(version) - 1];
+        const created = !before?.resource;
+        return {
+          fullUrl: `${base}/${record}`,
+          ...(version.resource ? { resource: version.resource } : {}),
+          request: !version.resource
+            ? { method: "DELETE", url: record }
+            : created
+              ? { method: "POST", url: type }
+              : { method: "PUT", url: record },
+          response: {
+            status: !version.resource ? "204" : created ? "201" : "200",
+            ...(version.recorded === undefined
+              ? {}
+              : { lastModified: version.recorded }),
+            etag: `W/"${version.versionId}"`,
+          },
+        };
+      }),
+    });
+  }
+
+  function personOf(patient: string): Resource | undefined {
+    return charts.get(patient)?.get(`Patient/${patient}`)?.at(-1)?.resource;
   }
 
   return async (request) => {
@@ -454,22 +599,84 @@ function token(text: string): { system?: string; code: string } {
 }
 
 function namesOf(
-  bundle: Bundle,
+  patient: Resource | undefined,
   id: string,
 ): { family: string; given: string } {
-  const patient = bundle.entry?.find(
-    (entry) => entry.resource.resourceType === "Patient",
-  )?.resource as { name?: { given?: string[]; family?: string }[] } | undefined;
-  const name = patient?.name?.[0];
+  const name = (
+    patient as { name?: { given?: string[]; family?: string }[] } | undefined
+  )?.name?.[0];
   return name
     ? { family: name.family ?? "", given: (name.given ?? []).join(" ") }
     : { family: id, given: "" };
 }
 
-/** A patient as the sign-in page lists them, family name first: `Marsh, Rowan Ellery`. */
-function patientName(bundle: Bundle, id: string): string {
-  const { family, given } = namesOf(bundle, id);
-  return [family, given].filter(Boolean).join(", ");
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/** An instant's UTC day in words: `1 February 2024`. */
+function inWords(instant: string): string {
+  const day = new Date(Date.parse(instant));
+  return `${day.getUTCDate()} ${MONTHS[day.getUTCMonth()]} ${day.getUTCFullYear()}`;
+}
+
+/** The letters of `cruds` that a token's scopes grant on `type`. */
+function granted(scopes: string, type: string): string {
+  const letters = new Set<string>();
+  for (const scope of scopes.split(" ")) {
+    const match = /^patient\/(\*|[A-Za-z]+)\.(read|write|\*|c?r?u?d?s?)$/.exec(
+      scope,
+    );
+    if (!match || (match[1] !== "*" && match[1] !== type)) continue;
+    const asked = match[2] ?? "";
+    const given =
+      asked === "read"
+        ? "rs"
+        : asked === "write"
+          ? "cud"
+          : asked === "*"
+            ? "cruds"
+            : asked;
+    for (const letter of given) letters.add(letter);
+  }
+  return [...letters].join("");
+}
+
+/** The period a FHIR date or dateTime names at its precision, in milliseconds, its end excluded: `2024` is the whole year. */
+function period(text: string): { start: number; end: number } | undefined {
+  const date = /^(\d{4})(?:-(0[1-9]|1[0-2])(?:-(0[1-9]|[12]\d|3[01]))?)?$/.exec(
+    text,
+  );
+  if (date) {
+    const [year, month, day] = date
+      .slice(1)
+      .map((part) => (part === undefined ? undefined : Number(part)));
+    const start = Date.UTC(year!, (month ?? 1) - 1, day ?? 1);
+    const end =
+      day !== undefined
+        ? Date.UTC(year!, month! - 1, day + 1)
+        : month !== undefined
+          ? Date.UTC(year!, month, 1)
+          : Date.UTC(year! + 1, 0, 1);
+    if (day !== undefined && new Date(start).getUTCDate() !== day) {
+      return undefined;
+    }
+    return { start, end };
+  }
+  if (!isInstant(text)) return undefined;
+  const start = Date.parse(text);
+  return { start, end: start + (text.includes(".") ? 1 : 1000) };
 }
 
 function escape(text: string): string {
@@ -603,5 +810,11 @@ function outcome(
   );
 }
 
+export {
+  HospitalDataError,
+  type RecordVersion,
+  recordsAt,
+  versionsOf,
+} from "./history.js";
 export * from "./route.js";
 export { brandsBundle } from "./brands.js";

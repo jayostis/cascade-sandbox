@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import type { Resource } from "../src/index.js";
+import { type Resource, recordsAt, versionsOf } from "../src/index.js";
 import { loadHospital } from "../src/node/index.js";
 import { OBSERVATION_CATEGORIES } from "../src/node/synthea.js";
 
@@ -51,15 +51,18 @@ test("every patient file keeps the hospitals' data rules", async () => {
         new URL(`data/${folder}/patients/${patient}.json`, PACKAGE),
       );
       assert.ok((await stat(file)).size <= 2 * 1024 * 1024, where);
-      const records = (bundle.entry ?? []).map((entry) => entry.resource);
-      const names = new Set(
-        records.map((record) => `${record.resourceType}/${record.id}`),
+      const versions = versionsOf(bundle, where);
+      const names = new Set(versions.keys());
+      for (const key of names) {
+        assert.ok(!ids.has(key), `${where} ${key} is in another file`);
+        ids.add(key);
+      }
+      const records = [...versions.values()].flatMap((each) =>
+        each.flatMap(({ resource }) => resource ?? []),
       );
       for (const record of records) {
         const name = `${where} ${record.resourceType}/${record.id}`;
         assert.ok(hospital.types.includes(record.resourceType), name);
-        assert.ok(!ids.has(`${record.resourceType}/${record.id}`), name);
-        ids.add(`${record.resourceType}/${record.id}`);
         if (record.resourceType === "Observation") {
           const codes = strings(record.category);
           assert.equal(
@@ -92,7 +95,7 @@ test("every patient file keeps the hospitals' data rules", async () => {
           }
         }
       }
-      const person = records.find(
+      const person = recordsAt(bundle).find(
         (record): record is Resource => record.resourceType === "Patient",
       );
       const key = JSON.stringify([
@@ -137,8 +140,12 @@ test("hand-written patients hold the codes that reach the reference tables: reti
     type: string,
     system: string,
   ) =>
-    (hospital.patients[patient]?.entry ?? [])
-      .map((entry) => entry.resource)
+    recordsAt(
+      hospital.patients[patient] ?? {
+        resourceType: "Bundle",
+        type: "collection",
+      },
+    )
       .filter((record) => record.resourceType === type)
       .map((record) => ({
         record,
