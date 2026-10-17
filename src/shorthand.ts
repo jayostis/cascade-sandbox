@@ -1,5 +1,10 @@
-import { HospitalDataError, isInstant } from "./history.js";
-import type { Bundle, BundleEntry, Resource } from "./index.js";
+import {
+  HospitalDataError,
+  historyEntry,
+  isInstant,
+  periodOf,
+} from "./history.js";
+import type { Bundle, Resource } from "./types.js";
 
 /** What a shorthand entry says of its record: when it began, and when it stopped. */
 export interface Shorthand {
@@ -36,8 +41,6 @@ const CLINICAL_DATES = [
   "performedPeriod.start",
 ];
 
-const DAY = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
-
 /** Whether a patient file's entry carries `shorthand`, so the file is an authoring file to compile. */
 export function hasShorthand(bundle: Bundle | ShorthandBundle): boolean {
   return (bundle.entry ?? []).some(
@@ -46,18 +49,11 @@ export function hasShorthand(bundle: Bundle | ShorthandBundle): boolean {
 }
 
 function instantOf(value: unknown, what: string, where: string): string {
-  if (typeof value === "string") {
-    const day = DAY.exec(value);
-    if (day) {
-      const [, year, month = "01", date = "01"] = day;
-      const iso = `${year}-${month}-${date}T00:00:00Z`;
-      const parsed = new Date(iso);
-      if (
-        !Number.isNaN(parsed.getTime()) &&
-        parsed.toISOString().startsWith(`${year}-${month}-${date}`)
-      )
-        return iso;
-    } else if (isInstant(value)) return value;
+  const period = typeof value === "string" ? periodOf(value) : undefined;
+  if (period !== undefined) {
+    return isInstant(value)
+      ? value
+      : new Date(period.start).toISOString().replace(".000Z", "Z");
   }
   throw new HospitalDataError(
     where,
@@ -73,35 +69,6 @@ function clinicalDate(resource: Resource): string | undefined {
     if (typeof found === "string") return found;
   }
   return undefined;
-}
-
-function version(
-  resource: Resource,
-  versionId: string,
-  at: string,
-  fullUrl: string | undefined,
-): BundleEntry {
-  const first = versionId === "1";
-  return {
-    ...(fullUrl === undefined ? {} : { fullUrl }),
-    resource: {
-      ...resource,
-      meta: { ...meta(resource), versionId, lastUpdated: at },
-    },
-    request: first
-      ? { method: "POST", url: resource.resourceType }
-      : { method: "PUT", url: `${resource.resourceType}/${resource.id}` },
-    response: first
-      ? { status: "201", lastModified: at }
-      : { status: "200", lastModified: at, etag: `W/"${versionId}"` },
-  };
-}
-
-function meta(resource: Resource): Record<string, unknown> {
-  const held = resource.meta;
-  return typeof held === "object" && held !== null && !Array.isArray(held)
-    ? (held as Record<string, unknown>)
-    : {};
 }
 
 const medicationStopped = (
@@ -135,7 +102,7 @@ const conditionStopped = (
   const rest = Object.fromEntries(
     Object.entries(resource).filter(([key]) => !key.startsWith("abatement")),
   ) as Resource;
-  const status = (code: string, display: string) => ({
+  const status = (code: string, display: string): fhir4.CodeableConcept => ({
     coding: [{ system: CONDITION_CLINICAL, code, display }],
   });
   return [
@@ -233,7 +200,7 @@ export function compileShorthand(file: ShorthandBundle, where: string): Bundle {
       start ?? (resource.resourceType === "Patient" ? earliest : undefined);
     if (placed === undefined) throw undated(record);
     if (stop === undefined || shorthand.stopped === undefined)
-      return [version(resource, "1", placed, fullUrl)];
+      return [historyEntry(resource, "1", placed, fullUrl)];
     if (Date.parse(stop) <= Date.parse(placed))
       throw refuse(
         `${record} stopped on ${shorthand.stopped}, which is not after it began on ${shorthand.active ?? clinicalDate(resource)}`,
@@ -247,8 +214,8 @@ export function compileShorthand(file: ShorthandBundle, where: string): Bundle {
             shorthand.stopped,
           );
     return [
-      version(open, "1", placed, fullUrl),
-      version(closed, "2", stop, fullUrl),
+      historyEntry(open, "1", placed, fullUrl),
+      historyEntry(closed, "2", stop, fullUrl),
     ];
   });
   return { resourceType: "Bundle", type: "history", entry: entries };

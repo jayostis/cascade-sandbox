@@ -10,8 +10,10 @@ import {
   demoHospital,
   HospitalDataError,
   type Resource,
+  exportCollection,
   recordsAt,
 } from "../src/index.js";
+import { historyEntry } from "../src/history.js";
 import { loadHospital } from "../src/node/index.js";
 import { pkcePair, signInAs } from "../src/testing.js";
 
@@ -23,20 +25,20 @@ function version(
   resource: Resource,
   versionId: string,
   at: string,
-  method: "POST" | "PUT" = versionId === "1" ? "POST" : "PUT",
+  method?: "POST" | "PUT",
 ): BundleEntry {
-  const record = `${resource.resourceType}/${resource.id}`;
+  const entry = historyEntry(resource, versionId, at);
+  if (method === undefined || method === entry.request?.method) return entry;
+  const created = method === "POST";
   return {
-    resource: { ...resource, meta: { versionId, lastUpdated: at } },
+    ...entry,
     request: {
       method,
-      url: method === "POST" ? resource.resourceType : record,
+      url: created
+        ? resource.resourceType
+        : `${resource.resourceType}/${resource.id}`,
     },
-    response: {
-      status: method === "POST" ? "201" : "200",
-      lastModified: at,
-      etag: `W/"${versionId}"`,
-    },
+    response: { ...entry.response!, status: created ? "201" : "200" },
   };
 }
 
@@ -439,6 +441,40 @@ test("a record made again after its deletion is written in its history as a new 
       ({ request }: Entry) => `${request?.method} ${request?.url}`,
     ),
     ["POST Observation", "DELETE Observation/o4", "POST Observation"],
+  );
+});
+
+test("a patient's export is a collection of each record's version at T, addressed as the hospital's own, and refuses a patient it lacks", () => {
+  const held = { hospital, patients: PATIENTS };
+  const at = (asOf?: string) => {
+    const collection = exportCollection(held, "p1", asOf);
+    assert.equal(collection.type, "collection");
+    return Object.fromEntries(
+      (collection.entry ?? []).map(({ fullUrl, resource }) => [
+        fullUrl,
+        resource?.resourceType === "MedicationStatement"
+          ? resource.status
+          : resource?.id,
+      ]),
+    );
+  };
+  assert.deepEqual(at(T), {
+    [`${BASE}/Patient/p1`]: "p1",
+    [`${BASE}/MedicationStatement/m1`]: "active",
+    [`${BASE}/Observation/o1`]: "o1",
+    [`${BASE}/Observation/o2`]: "o2",
+  });
+  assert.deepEqual(at(), {
+    [`${BASE}/Patient/p1`]: "p1",
+    [`${BASE}/MedicationStatement/m1`]: "completed",
+    [`${BASE}/Observation/o2`]: "o2",
+    [`${BASE}/Condition/c1`]: "c1",
+  });
+  assert.throws(
+    () => exportCollection(held, "nobody"),
+    (error: unknown) =>
+      error instanceof HospitalDataError &&
+      error.reason === `${hospital.name} has no patient nobody`,
   );
 });
 

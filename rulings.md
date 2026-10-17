@@ -25,6 +25,20 @@ at which an app connects, and every answer is the one a real server would have g
 Pinned by `history.test.ts`, "the hospital answers each read, search, vread and history with its records as they stood
 at T".
 
+## The three clocks
+
+Three times are in play, and "as of" names only the first.
+
+- **Source record time:** when the source recorded a version, its `response.lastModified`, equal to the version's
+  `meta.lastUpdated`. T above is a point on this clock. A pull's document says it as `rec:answeredAsOf`.
+- **Clinical time:** the dates inside a resource (`effectiveDateTime`, `onsetDateTime`, `period.start`, and the rest).
+  The hospital never reads them to answer, and the shorthand reads them only to place a record on the first clock.
+- **Pod arrival time:** when a pod received a revision, `prov:generatedAtTime` on it. The hospital has no say in it.
+
+"As of" is never clinical time: a record dated before T is still absent at T when the source recorded it after T.
+
+Pinned by `history.test.ts`, "a patient's export is a collection of each record's version at T".
+
 ## Scopes
 
 Read, vread and history need `r` on the type; a search needs `s`. A v2 scope `patient/<Type|*>.<letters>` grants its
