@@ -254,8 +254,8 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
         </ul>`
         }
         <details${chosen === undefined ? "" : " open"}>
-          <summary><label for="simulate_error">For app developers: simulate a failure</label></summary>
-          <select id="simulate_error" name="simulate_error">
+          <summary>For app developers: simulate a failure</summary>
+          <select name="simulate_error" aria-label="Failure to simulate">
             <option value="">None: sign in normally</option>
             ${failures}
           </select>

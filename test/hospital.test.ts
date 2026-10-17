@@ -766,7 +766,15 @@ test("each error switch fails at its own step, as smart-launcher-v2 does, and an
       simulate_error: "request_expired_token",
     })
   ).text();
-  assert.match(page, /<select id="simulate_error" name="simulate_error"/);
+  assert.match(
+    page,
+    /<summary>For app developers: simulate a failure<\/summary>/,
+  );
+  assert.doesNotMatch(page, /<label for="simulate_error"/);
+  assert.match(
+    page,
+    /<select name="simulate_error" aria-label="Failure to simulate">/,
+  );
   for (const name of [
     "token_invalid_token",
     "token_invalid_scope",
