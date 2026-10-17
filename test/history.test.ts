@@ -650,7 +650,7 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
         p2: history(version(person("p2", "Brook"), "1", at), c1(at)),
       },
       "Condition/c1 is in two patient files",
-      "patients/p2.json",
+      "patient p2",
     ],
     [
       "a file named for another patient",
@@ -674,7 +674,7 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
     join(folder, "hospitals", "cascade-north", "hospital.json"),
     JSON.stringify(hospital),
   );
-  for (const [name, patients, reason, where = "patients/p1.json"] of rows) {
+  for (const [name, patients, reason, where = "patient p1"] of rows) {
     assert.throws(
       () => demoHospital({ hospital, patients }),
       refused(where, reason),
@@ -696,7 +696,7 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
         }),
       );
     }
-    const patient = /^patients\/(.*)\.json$/.exec(where)![1];
+    const patient = where.slice("patient ".length);
     await assert.rejects(
       loadHospital("cascade-north", roots),
       refused(`${patient}/sources/cascade-north/fhir.json`, reason),

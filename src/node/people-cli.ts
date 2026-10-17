@@ -18,19 +18,34 @@ const git = async (checkout: string, args: string[]): Promise<Buffer> =>
     })
   ).stdout;
 
+/** A checkout that cannot give the pinned commit's people: a usage error, said in one sentence. */
+class Unpinned extends Error {}
+
 /** Every file under the vocabulary's `people/` at the pinned commit, by its path there. */
 async function pinned(checkout: string): Promise<Map<string, Buffer>> {
   const { commit } = JSON.parse(
     await readFile(join(PACKAGE, "vocabulary.json"), "utf8"),
   ) as { commit: string };
-  const paths = (
-    await git(checkout, ["ls-tree", "-r", "--name-only", commit, FOLDER])
-  )
+  let listed: Buffer;
+  try {
+    listed = await git(checkout, [
+      "ls-tree",
+      "-r",
+      "--name-only",
+      commit,
+      FOLDER,
+    ]);
+  } catch {
+    throw new Unpinned(
+      `${checkout} does not hold ${commit}: check out the pinned commit`,
+    );
+  }
+  const paths = listed
     .toString("utf8")
     .split("\n")
     .filter((path) => path !== "");
   if (paths.length === 0)
-    throw new Error(`${checkout} has no ${FOLDER}/ at ${commit}`);
+    throw new Unpinned(`${checkout} has no ${FOLDER}/ at ${commit}`);
   const files = new Map<string, Buffer>();
   for (const path of paths)
     files.set(path, await git(checkout, ["show", `${commit}:${path}`]));
@@ -111,11 +126,19 @@ if (
 ) {
   console.error(USAGE);
   process.exitCode = 2;
-} else if (args.values.check) {
-  const wrong = await check(checkout);
-  for (const line of wrong) console.error(line);
-  if (wrong.length > 0) process.exitCode = 1;
-  else console.log("vocabulary/people/ is the pinned commit's people/");
-} else {
-  console.log(`Copied ${await copy(checkout)} files into vocabulary/people/`);
-}
+} else
+  try {
+    if (args.values.check) {
+      const wrong = await check(checkout);
+      for (const line of wrong) console.error(line);
+      if (wrong.length > 0) process.exitCode = 1;
+      else console.log("vocabulary/people/ is the pinned commit's people/");
+    } else
+      console.log(
+        `Copied ${await copy(checkout)} files into vocabulary/people/`,
+      );
+  } catch (error) {
+    if (!(error instanceof Unpinned)) throw error;
+    console.error(error.message);
+    process.exitCode = 2;
+  }

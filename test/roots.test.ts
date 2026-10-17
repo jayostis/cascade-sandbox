@@ -11,6 +11,7 @@ import {
   loadHospital,
   loadHospitals,
   type Roots,
+  VOCABULARY_PEOPLE,
 } from "../src/node/index.js";
 
 const work = await mkdtemp(join(tmpdir(), "t5-roots-"));
@@ -207,7 +208,10 @@ const AT = "https://mine.demo.invalid/fhir";
 const HOSPITALS = join(work, "identity", "hospitals");
 await folder(HOSPITALS, "mine", hospitalAt("mine"));
 
-/** A people root holding one person folder, `person.json` and each source as given; a string is written as it is. */
+/**
+ * A people root holding one person folder, `person.json` and each source as given: a name is its `fhir.json`, a path
+ * with a `/` is that file under `sources/`, and `null` an empty folder. A string is written as it is.
+ */
 async function people(
   name: string,
   person: unknown,
@@ -223,12 +227,32 @@ async function people(
     );
   };
   if (person !== undefined) await write(join(root, at, "person.json"), person);
-  for (const [source, bundle] of Object.entries(sources))
-    await write(join(root, at, "sources", source, "fhir.json"), bundle);
+  for (const [source, bundle] of Object.entries(sources)) {
+    const path = join(root, at, "sources", ...source.split("/"));
+    if (bundle === null) await mkdir(path, { recursive: true });
+    else
+      await write(
+        source.includes("/") ? path : join(path, "fhir.json"),
+        bundle,
+      );
+  }
   return root;
 }
 
-test("each source's Patient agrees with its person on name, birth date and gender, every version of it, but where the person declares a difference", async () => {
+test("each source's Patient agrees with its person on name, birth date and gender, every version of it, but where the person declares a difference, which a C-CDA source or a kit download may show instead", async () => {
+  const declared = (source: string) => ({
+    source,
+    field: "name",
+    value: { family: "Natarajan", given: ["Pria"] },
+    reason: "The clinic misspelled her name.",
+    expectedMatch: "probable",
+  });
+  const priya = {
+    id: "priya-natarajan",
+    name: { family: "Natarajan", given: ["Priya"] },
+    birthDate: "1968-11-04",
+    gender: "female",
+  };
   const roots = {
     hospitals: [HOSPITALS],
     people: [
@@ -273,10 +297,36 @@ test("each source's Patient agrees with its person on name, birth date and gende
           },
         },
       ),
+      await people(
+        "kit",
+        {
+          ...priya,
+          kit: "conformance/priya-natarajan",
+          differences: [declared("hospital-b")],
+        },
+        {},
+        "priya-natarajan",
+      ),
+      await people(
+        "ccda",
+        { ...priya, id: "priya-ccda", differences: [declared("mine")] },
+        {
+          mine: collection(
+            patient({
+              id: "pn-1",
+              name: [{ family: "Natarajan", given: ["Priya"] }],
+              birthDate: priya.birthDate,
+            }),
+          ),
+          "mine/ccda/2025-02-01.xml": "<ClinicalDocument/>",
+        },
+        "priya-ccda",
+      ),
     ],
   };
   assert.deepEqual(Object.keys((await loadHospital("mine", roots)).patients), [
     "hq-1",
+    "pn-1",
   ]);
 });
 
@@ -357,6 +407,48 @@ test("a person is refused where a source disagrees with them, or a declared diff
         }),
       ],
       "hedda-quill/person.json: declares a difference in birthDate at mine that its Patient does not show",
+    ],
+    [
+      "a declared difference at a source the person has nowhere",
+      [
+        await people("nowhere", {
+          ...HEDDA,
+          differences: [
+            {
+              source: "cascade-west",
+              field: "birthDate",
+              value: "1971-05-03",
+              reason: "A typing slip at the desk.",
+              expectedMatch: "probable",
+            },
+          ],
+        }),
+      ],
+      "hedda-quill/person.json: declares a difference in birthDate at cascade-west, where hedda-quill has no source",
+    ],
+    [
+      "a fhir.json named in another case",
+      [
+        await people("case", HEDDA, {
+          "mine/Fhir.json": collection(patient()),
+        }),
+      ],
+      "hedda-quill/sources/mine/Fhir.json: is not a source file: a source holds fhir.json and ccda/<day>.xml",
+    ],
+    [
+      "a stray file beside a source's fhir.json",
+      [
+        await people("stray", HEDDA, {
+          mine: collection(patient()),
+          "mine/notes.txt": "x",
+        }),
+      ],
+      "hedda-quill/sources/mine/notes.txt: is not a source file: a source holds fhir.json and ccda/<day>.xml",
+    ],
+    [
+      "an empty source folder",
+      [await people("empty", HEDDA, { mine: null })],
+      "hedda-quill/sources/mine: holds no source file: a source holds fhir.json and ccda/<day>.xml",
     ],
     [
       "no person.json",
@@ -545,6 +637,36 @@ test("a patient file is checked against the app's hospital and people and writte
   );
   assert.deepEqual(JSON.parse(await readFile(personFile, "utf8")), HEDDA);
 
+  const rue = (given: string) =>
+    collection(
+      patient({ id: "rue-hale", name: [{ family: "Hale", given: [given] }] }),
+    );
+  await mkdir(join(APP, "people", "rue-hale", "sources", "alpha"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(APP, "people", "rue-hale", "person.json"),
+    JSON.stringify({
+      ...HEDDA,
+      id: "rue-hale",
+      name: { family: "Hale", given: ["Rue"] },
+      differences: [
+        {
+          source: "alpha",
+          field: "name",
+          value: { family: "Hale", given: ["Ru"] },
+          reason: "The desk wrote the name she signs with.",
+          expectedMatch: "probable",
+        },
+      ],
+    }),
+  );
+  await writeFile(
+    join(APP, "people", "rue-hale", "sources", "alpha", "fhir.json"),
+    JSON.stringify(rue("Ru")),
+  );
+  await addPatient(APP, "zeta", await write("rue.json", rue("Rue")));
+
   const one = (id: string, ...more: Resource[]) => ({
     resourceType: "Bundle",
     type: "collection",
@@ -648,6 +770,25 @@ test("a patient file is checked against the app's hospital and people and writte
       ),
       "twice/sources/alpha/fhir.json: MedicationStatement/metformin is in two patient files",
     ],
+    [
+      "a Patient id that is a person of the package",
+      "zeta",
+      await write("tobias.json", {
+        ...one("tobias-fenn"),
+        entry: [
+          {
+            resource: {
+              resourceType: "Patient",
+              id: "tobias-fenn",
+              name: [{ family: "Fenn", given: ["Tobias"] }],
+              birthDate: "1958-11-03",
+              gender: "male",
+            },
+          },
+        ],
+      }),
+      `tobias.json: holds Patient tobias-fenn, which is a person of ${VOCABULARY_PEOPLE.replace(/[\\/]$/, "")} already: give the patient another id`,
+    ],
   ];
   for (const [name, hospital, source, message] of rows)
     await assert.rejects(
@@ -659,6 +800,6 @@ test("a patient file is checked against the app's hospital and people and writte
     (await loadHospitals(APP_ROOTS)).map(
       ({ patients }) => Object.keys(patients).length,
     ),
-    [9, 3, 1, 0, 1],
+    [9, 3, 2, 0, 2],
   );
 });

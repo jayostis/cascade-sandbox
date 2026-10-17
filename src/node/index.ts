@@ -1,20 +1,34 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HospitalDataError, patientRecords, recordsAt } from "../history.js";
-import type { Bundle, Hospital, Story } from "../index.js";
+import {
+  HospitalDataError,
+  patientRecords,
+  recordsAt,
+  versionsOf,
+} from "../history.js";
+import type { Bundle, Hospital, Resource, Story } from "../index.js";
 import { hospitalId } from "../route.js";
 import {
   compileShorthand,
   hasShorthand,
   type ShorthandBundle,
 } from "../shorthand.js";
-import { checkIdentity, loadPeople, patientOf, type Person } from "./people.js";
+import {
+  checkIdentity,
+  isName,
+  loadPeople,
+  officialName,
+  patientOf,
+  type LoadedPerson,
+  type Person,
+} from "./people.js";
 import { checkBundle, isObject, isStrings, kind, readJson } from "./read.js";
 
 export {
   checkIdentity,
   loadPeople,
+  officialName,
   type Difference,
   type Gender,
   type Generated,
@@ -127,18 +141,30 @@ async function hospitalsIn(
 export async function loadHospitals(
   roots: Roots = {},
 ): Promise<LoadedHospital[]> {
-  const hospitals = await hospitalsIn(
-    roots.hospitals ?? DEFAULT_ROOTS.hospitals,
+  return assemble(
+    await hospitalsIn(roots.hospitals ?? DEFAULT_ROOTS.hospitals),
+    await loadPeople(roots.people ?? DEFAULT_ROOTS.people),
   );
-  const patients = new Map<string, Record<string, Bundle>>(
-    [...hospitals.keys()].map((id) => [id, {}]),
+}
+
+/** The hospitals with their patients, every person's sources placed and each hospital's patient files checked. */
+function assemble(
+  hospitals: ReadonlyMap<string, Hospital>,
+  people: readonly LoadedPerson[],
+): LoadedHospital[] {
+  const placed = new Map(
+    [...hospitals.keys()].map((id) => [
+      id,
+      {
+        patients: {} as Record<string, Bundle>,
+        places: {} as Record<string, string>,
+        holders: {} as Record<string, string>,
+      },
+    ]),
   );
-  const holder = new Map<string, string>();
-  for (const { person, sources } of await loadPeople(
-    roots.people ?? DEFAULT_ROOTS.people,
-  ))
+  for (const { person, sources } of people)
     for (const [source, bundle] of Object.entries(sources)) {
-      const at = patients.get(source);
+      const at = placed.get(source);
       if (at === undefined)
         throw new HospitalDataError(
           `${person.id}/sources/${source}`,
@@ -146,27 +172,20 @@ export async function loadHospitals(
         );
       const where = `${person.id}/sources/${source}/fhir.json`;
       const id = patientOf(bundle, where);
-      const other = holder.get(`patients/${id}.json|${source}`);
+      const other = at.holders[id];
       if (other !== undefined)
         throw new HospitalDataError(
           where,
-          `holds Patient ${id}, which ${other.split("/")[0]} holds at ${source} too`,
+          `holds Patient ${id}, which ${other} holds at ${source} too`,
         );
-      holder.set(`patients/${id}.json|${source}`, where);
-      at[id] = bundle;
+      at.patients[id] = bundle;
+      at.places[id] = where;
+      at.holders[id] = person.id;
     }
   return [...hospitals].map(([id, hospital]) => {
-    const held = patients.get(id)!;
-    try {
-      patientRecords(hospital.fhirBase, held);
-    } catch (error) {
-      const where =
-        error instanceof HospitalDataError &&
-        holder.get(`${error.where}|${id}`);
-      if (where) throw new HospitalDataError(where, error.reason);
-      throw error;
-    }
-    return { hospital, patients: held };
+    const { patients, places } = placed.get(id)!;
+    patientRecords(hospital.fhirBase, patients, places);
+    return { hospital, patients };
   });
 }
 
@@ -222,24 +241,15 @@ export async function loadStories(
 }
 
 /** A Person from a Patient, or a refusal naming the field it lacks. */
-function personFrom(patient: Record<string, unknown>, where: string): Person {
+function personFrom(patient: Resource, where: string): Person {
   const id = patient.id as string;
-  const names = Array.isArray(patient.name)
-    ? (patient.name as unknown[]).filter(isObject)
-    : [];
-  const name = names.find((one) => one.use === "official") ?? names[0];
+  const name = officialName(patient);
   const lacks = (field: string) =>
     new HospitalDataError(
       where,
       `holds Patient ${id} with no ${field}, which its person.json needs`,
     );
-  if (
-    name === undefined ||
-    typeof name.family !== "string" ||
-    !isStrings(name.given) ||
-    name.given.length === 0
-  )
-    throw lacks("name of family and given names");
+  if (!isName(name)) throw lacks("name of family and given names");
   if (typeof patient.birthDate !== "string") throw lacks("birthDate");
   if (
     !["male", "female", "other", "unknown"].includes(patient.gender as string)
@@ -247,7 +257,7 @@ function personFrom(patient: Record<string, unknown>, where: string): Person {
     throw lacks("gender");
   return {
     id,
-    name: { family: name.family, given: name.given },
+    name,
     birthDate: patient.birthDate,
     gender: patient.gender as Person["gender"],
   };
@@ -294,58 +304,61 @@ export async function addPatient(
     );
   const root = resolve(app);
   const people = join(root, "people");
-  const roots: Roots = {
-    hospitals: [...DEFAULT_ROOTS.hospitals, join(root, "hospitals")],
-    people: [...DEFAULT_ROOTS.people, people],
-  };
-  const loaded = await loadHospital(hospital, roots);
+  const hospitals = await hospitalsIn([
+    ...DEFAULT_ROOTS.hospitals,
+    join(root, "hospitals"),
+  ]);
+  const at = hospitals.get(hospital);
+  if (at === undefined)
+    throw new HospitalDataError(
+      "hospital.json",
+      `there is no hospital ${hospital}`,
+    );
+  const loaded = await loadPeople([...DEFAULT_ROOTS.people, people]);
+  const folder = join(people, id);
+  const known = loaded.find((one) => one.person.id === id);
+  if (known !== undefined && known.folder !== folder)
+    throw new HospitalDataError(
+      where,
+      `holds Patient ${id}, which is a person of ${dirname(known.folder)} already: give the patient another id`,
+    );
   const name = `${id}/sources/${hospital}/fhir.json`;
-  if (id in loaded.patients)
+  if (known !== undefined && hospital in known.sources)
     throw new HospitalDataError(
       name,
       "is already at this hospital: remove it first, or give the patient another id",
     );
-  let records;
-  try {
-    records = patientRecords(loaded.hospital.fhirBase, {
-      ...loaded.patients,
-      [id]: bundle,
-    }).get(id);
-  } catch (error) {
-    if (
-      error instanceof HospitalDataError &&
-      error.where === `patients/${id}.json`
-    )
-      throw new HospitalDataError(name, error.reason);
-    throw error;
-  }
-  for (const record of records?.keys() ?? []) {
+  const person =
+    known?.person ??
+    personFrom(
+      recordsAt(bundle).find(({ resourceType }) => resourceType === "Patient")!,
+      where,
+    );
+  const staged: LoadedPerson = {
+    folder,
+    person,
+    sources: { ...known?.sources, [hospital]: bundle },
+    documents: known?.documents ?? [],
+  };
+  checkIdentity(staged.person, staged.sources, staged.documents);
+  assemble(hospitals, [...loaded.filter((one) => one !== known), staged]);
+  for (const record of versionsOf(bundle, name).keys()) {
     const type = record.slice(0, record.indexOf("/"));
-    if (!loaded.hospital.types.includes(type))
+    if (!at.types.includes(type))
       throw new HospitalDataError(
         name,
         `${record} is ${/^[AEIOU]/.test(type) ? "an" : "a"} ${type}, which hospital.json does not list in types`,
       );
   }
-  const folder = join(people, id);
-  const own = join(folder, "person.json");
-  const held = (await kind(own)) === "file";
-  const person = held
-    ? (await loadPeople([people])).find((one) => one.person.id === id)!.person
-    : personFrom(
-        recordsAt(bundle).find(
-          ({ resourceType }) => resourceType === "Patient",
-        )!,
-        where,
-      );
-  checkIdentity(person, { [hospital]: bundle });
   const path = join(folder, "sources", hospital, "fhir.json");
   await mkdir(join(folder, "sources", hospital), { recursive: true });
   await writeFile(path, `${JSON.stringify(bundle, null, 2)}\n`, { flag: "wx" });
-  if (!held)
-    await writeFile(own, `${JSON.stringify(person, null, 2)}\n`, {
-      flag: "wx",
-    });
+  if (known === undefined)
+    await writeFile(
+      join(folder, "person.json"),
+      `${JSON.stringify(person, null, 2)}\n`,
+      { flag: "wx" },
+    );
   return path;
 }
 
