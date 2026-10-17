@@ -41,6 +41,8 @@ const alpha = await folder(ROOT_A, "alpha");
 await folder(ROOT_B, "mid");
 await folder(ROOT_C, "again", "alpha");
 await writeFile(join(ROOT_A, "stray"), "a file where a hospital folder goes");
+// A hospitals root kept in git holds a `.git` folder: no hospital, and no typo to tell the person about.
+await mkdir(join(ROOT_A, ".git"));
 // What a hospital folder may hold that this loader does not know: a face, a note, a folder named like a patient file.
 await mkdir(join(alpha, "faces"));
 await writeFile(join(alpha, "notes.md"), "x");

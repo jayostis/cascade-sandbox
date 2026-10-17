@@ -129,7 +129,7 @@ function idOf(hospital: Hospital): string {
 /**
  * Every hospital in the folders given (the package's own by default), as `demoFetch` takes them: roots in order, then
  * each root's hospital folders by name. A root that is not a folder is skipped, and so is a file where a hospital
- * folder would be. Two hospitals with one id throw.
+ * folder would be, and a name with a leading dot (`.git`). Two hospitals with one id throw.
  */
 export async function loadHospitals(
   roots: readonly string[] = [DATA_FOLDER],
@@ -139,6 +139,7 @@ export async function loadHospitals(
   for (const root of roots) {
     if ((await kind(root)) !== "folder") continue;
     for (const name of (await readdir(root)).sort()) {
+      if (name.startsWith(".")) continue;
       const folder = join(root, name);
       if ((await kind(folder)) !== "folder") continue;
       let loaded: LoadedHospital;
