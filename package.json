@@ -1,15 +1,36 @@
 {
-  "name": "@cascade-runtime/demo-hospital",
+  "name": "@the-cascade-protocol/sandbox",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "Pretend SMART on FHIR hospitals, as functions from a Request to a Response, for testing connections with no account and no network.",
   "license": "Apache-2.0",
-  "scripts": {
-    "synthea": "tsc -b && node dist/src/node/synthea-cli.js"
-  },
+  "files": [
+    "dist/src",
+    "data",
+    "stories"
+  ],
   "exports": {
     ".": "./dist/src/index.js",
-    "./node": "./dist/src/node/index.js"
+    "./node": "./dist/src/node/index.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "prepare": "tsc -b",
+    "typecheck": "tsc -b tsconfig.test.json",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "tsc -b tsconfig.test.json && node --test \"dist/test/*.test.js\"",
+    "synthea": "tsc -b && node dist/src/node/synthea-cli.js",
+    "validate:data": "tsc -b && node validator/validate.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.5",
+    "eslint": "10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.9",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.0"
   }
 }

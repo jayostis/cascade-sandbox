@@ -1,5 +1,5 @@
 // Validates every resource the demo hospitals serve, each version of each record, each patient file and served Bundle whole, and their brands bundle, against
-// FHIR R4, US Core and SMART App Launch, with the HL7 validator in Docker. Run from the repository's root after `tsc -b`: `npm run validate:data`.
+// FHIR R4, US Core and SMART App Launch, with the HL7 validator in Docker. Run from the repository's root: `npm run validate:data`.
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,9 +19,7 @@ const IMAGE =
   "eclipse-temurin:21-jre@sha256:cff19e6215689161eb6162c11b86b0c60ddf802164f2eaf48d570f8fb79a36c5";
 const IGS = ["hl7.fhir.us.core#6.1.0", "hl7.fhir.uv.smart-app-launch#2.2.0"];
 const EXTENSIONS = ["http://synthetichealth.github.io/synthea/"];
-const WORK = fileURLToPath(
-  new URL("../../../build/validator/", import.meta.url),
-);
+const WORK = fileURLToPath(new URL("../build/validator/", import.meta.url));
 
 /** A token for `patient` at `hospital`, signed in through its own authorize and token endpoints. */
 async function tokenFor(hospital, patients, patient) {
