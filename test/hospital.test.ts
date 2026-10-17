@@ -343,6 +343,13 @@ test("the sign-in page preselects the patient its login_hint names, in either or
       ([, name]) => name,
     );
   };
+  const page = await (await authorize(hospital, NORTH, {})).text();
+  const radios = page.match(/<input [^>]*name="patient"[^>]*>/g) ?? [];
+  assert.ok(
+    radios.length > 0 && radios.every((radio) => radio.includes(" required")),
+    radios.join(),
+  );
+  assert.match(page, /<button [^>]*value="cancel" formnovalidate>/);
   assert.deepEqual(await preselected("rowan-ellery-marsh"), [
     "Marsh, Rowan Ellery",
   ]);
