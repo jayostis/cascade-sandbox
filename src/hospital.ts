@@ -51,6 +51,15 @@ const AUTHORIZE_PARAMETERS = [
   "code_challenge",
   "code_challenge_method",
 ];
+/** The types whose `category` is a CodeableConcept, so a search's `category` matches its codings. */
+const CATEGORISED = new Set([
+  "Condition",
+  "DiagnosticReport",
+  "MedicationRequest",
+  "MedicationStatement",
+  "Observation",
+  "Procedure",
+]);
 
 interface Face {
   readonly base: string;
@@ -576,6 +585,16 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
           resource: hospital.types.map((type) => ({
             type,
             interaction: interactions(type),
+            ...(type === "Patient"
+              ? {}
+              : {
+                  searchParam: [
+                    { name: "patient", type: "reference" },
+                    ...(CATEGORISED.has(type)
+                      ? [{ name: "category", type: "token" }]
+                      : []),
+                  ],
+                }),
           })),
         },
       ],

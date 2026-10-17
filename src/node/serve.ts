@@ -3,7 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, isIP } from "node:net";
 import { demoRouter, type DemoHospitalOptions } from "../index.js";
 import { HospitalDataError, isInstant } from "../history.js";
 import { DEMO_HOSTS } from "../hosts.js";
@@ -63,8 +63,40 @@ function forwardedHostAndProto(header: string): {
 
 /** `http://<host>`, undefined when `host` is not a host and an optional port. */
 function originOf(host: string): string | undefined {
-  const at = new URL(`http://${host}`);
-  return at.host === host.toLowerCase() ? at.origin : undefined;
+  try {
+    const at = new URL(`http://${host}`);
+    return at.host === host.toLowerCase() ? at.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const ALWAYS_ALLOWED = new Set(["localhost", "host.docker.internal"]);
+
+/** `host`'s name when it is not an IP literal, `localhost`, `host.docker.internal` or one of `named`; undefined when it is one, or not a host. */
+function refusedName(
+  host: string,
+  named: ReadonlySet<string>,
+): string | undefined {
+  const origin = originOf(host);
+  if (origin === undefined) return undefined;
+  const { hostname } = new URL(origin);
+  return isIP(hostname.replace(/^\[|\]$/g, "")) !== 0 ||
+    ALWAYS_ALLOWED.has(hostname) ||
+    named.has(hostname)
+    ? undefined
+    : hostname;
+}
+
+/** Whether a browser marked the request as sent from a page other than the listener's own. */
+function crossSite(incoming: IncomingMessage): boolean {
+  const { origin, host } = incoming.headers;
+  const site = incoming.headers["sec-fetch-site"];
+  return (
+    (origin !== undefined &&
+      (host === undefined || origin !== originOf(host))) ||
+    (site !== undefined && site !== "same-origin" && site !== "none")
+  );
 }
 
 /**
@@ -106,7 +138,9 @@ function checkedAsOf(asOf: string | undefined): void {
  * `demoRemapFetch(origin)` gets each hospital at the address it holds, `https://<id>.demo.invalid/...`, so every link in
  * its records names that address; its sign-in pages are the listener's own, `<origin>/<id>/authorize`. A client that
  * calls the listener directly gets each hospital at `http://<host>/<id>/fhir`, where `<host>` is the one it asked,
- * and every link names that. `POST <origin>/world-date` with the form field `asOf` moves the world's date.
+ * and every link names that. A request whose `Host` names anything but an IP literal, `localhost`,
+ * `host.docker.internal` or one of `hosts` is a 403. `POST <origin>/world-date` with the form field `asOf` moves the
+ * world's date; one a browser sends from another page is a 403.
  */
 export async function serveDemo(
   hospitals: Iterable<DemoHospitalOptions>,
@@ -114,11 +148,16 @@ export async function serveDemo(
     readonly asOf?: string;
     /** The port to listen on; absent or 0, the system picks one. */
     readonly port?: number;
+    /** Names besides IP literals, `localhost` and `host.docker.internal` that a request's `Host` may give. */
+    readonly hosts?: Iterable<string>;
     /** Called with each request as it is handed to the hospitals. */
     readonly onRequest?: (request: Request) => void;
   } = {},
 ): Promise<DemoListener> {
   checkedAsOf(options.asOf);
+  const named = new Set(
+    [...(options.hosts ?? [])].map((name) => name.toLowerCase()),
+  );
   const held = [...hospitals];
   let route: ((request: Request) => Promise<Response>) | undefined;
   let origin = "";
@@ -140,6 +179,11 @@ export async function serveDemo(
   }
 
   async function worldDate(incoming: IncomingMessage): Promise<Response> {
+    if (crossSite(incoming))
+      return plain(
+        403,
+        "The world's date is not moved by a page on another site.",
+      );
     if (incoming.method !== "POST")
       return plain(405, "The world's date is moved by a POST.", {
         Allow: "POST",
@@ -167,6 +211,18 @@ export async function serveDemo(
   ): Promise<void> {
     const forwarded = incoming.headers.forwarded;
     const target = incoming.url ?? "/";
+    const { host } = incoming.headers;
+    const refused = host === undefined ? undefined : refusedName(host, named);
+    if (refused !== undefined) {
+      await send(
+        outgoing,
+        plain(
+          403,
+          `The listener answers an IP address, localhost or host.docker.internal; start it with --host ${refused} to answer that name.`,
+        ),
+      );
+      return;
+    }
     if (forwarded === undefined && target.split("?")[0] === WORLD_DATE) {
       await send(outgoing, await worldDate(incoming));
       return;

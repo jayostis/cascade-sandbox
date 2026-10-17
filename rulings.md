@@ -194,7 +194,9 @@ RFC 9110, [section 7.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.2)
 to (see "`aud` is one URL").
 
 Each base also answers `GET <base>/metadata`, with no token, as a CapabilityStatement naming the resource types, their
-interactions, and the authorize and token endpoints in the `oauth-uris` extension.
+interactions, and the authorize and token endpoints in the `oauth-uris` extension. Each searchable type declares the
+`patient` search parameter, which every search needs, and `category` where the type's `category` is a CodeableConcept
+and the search matches its codings; a client that plans its queries from `metadata` learns both.
 
 > "Applications SHALL return a resource that describes the functionality of the server end-point."
 
@@ -207,3 +209,43 @@ source.
 Pinned by `serve.test.ts`, "a caller with only the listener's address discovers, signs in, searches and pages, every
 link at the listener", "a direct sign-in takes the base it came to as aud, and refuses the hospital's own" and "a direct
 caller gets the hospital at the host it asked".
+
+## The listener answers only the names it was given
+
+Every request to the listener, remapped or direct, whose `Host` names anything but an IP literal, `localhost`,
+`host.docker.internal`, or a name given by `--host <name>` (`serveDemo({ hosts })`) is a 403 with one sentence naming
+`--host`. The base follows `Host`, so without this a page at a name re-pointed at 127.0.0.1 (DNS rebinding) is
+same-origin with a hospital: it signs in, takes the code, exchanges it and reads every record, with an `aud` that
+matches because it chose the `Host`. An IP literal is always safe, because a rebinding page's origin is a domain name.
+`demoRemapFetch` sends `Host: 127.0.0.1:<port>`, so remapped answers are unchanged.
+
+> "Non-HTTPS servers are vulnerable to DNS rebinding attacks without validation on the Host header."
+
+Vite, [CVE-2025-24010](https://github.com/vitejs/vite/security/advisories/GHSA-vg6x-rcgg-rjx6), read 2026-10-17, fixed
+by [`server.allowedHosts`](https://vite.dev/config/server-options): "localhost and domains under .localhost and all IP
+addresses are allowed by default". webpack-dev-server's CVE-2018-14732 was fixed the same way (`allowedHosts`), as Rails
+guards with `config.hosts` ([HostAuthorization](https://guides.rubyonrails.org/configuring.html), "Prevents against DNS
+rebinding and other Host header attacks") and Django with
+[`ALLOWED_HOSTS`](https://docs.djangoproject.com/en/5.2/ref/settings/). `host.docker.internal` is allowed with no option
+because I1's Inferno reaches the listener from a container under that name; the CLI prints each base at it.
+
+Pinned by `serve.test.ts`, "a request the listener cannot place, or whose Host it does not answer, is refused, each for
+its reason".
+
+## The world's date is moved only by a caller that is not a page on another site
+
+`POST <origin>/world-date` is a 403 when the request has an `Origin` that is not the listener's own, or a `Sec-Fetch-Site`
+other than `same-origin` or `none`. A form-encoded POST needs no preflight, so without this any page in the browser could
+move the date under a running app or test run. Browsers send `Origin` on every cross-origin POST; curl, Node and Inferno
+send neither header, so the README's `curl -d asOf=…` still works, and no token or custom header is asked for.
+
+> "Servers can use these headers — most importantly Sec-Fetch-Site — as a lightweight and reliable method to block
+> obvious cross-site requests."
+
+OWASP, [Cross-Site Request Forgery Prevention Cheat
+Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html), read
+2026-10-17, which also gives verifying `Origin` against the target's origin; [Fetch
+Metadata](https://www.w3.org/TR/fetch-metadata/) defines the header.
+
+Pinned by `serve.test.ts`, "a POST to the listener's world-date moves the world's date for the next answer, and refuses
+what is not an instant or comes from another site".

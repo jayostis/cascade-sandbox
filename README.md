@@ -129,16 +129,23 @@ people's codes; `vocabulary/people/README.md` carries the hand-written ones'.
 
 ## A real address
 
-`npm run serve -- [--port <n>] [--as-of <instant>]` starts the hospitals in a
-process of their own and prints `Listening at <origin>` and each hospital's
-base, `<origin>/<id>/fhir`. A tool outside Node (Inferno, curl, an app in
-another language) needs only that base: discovery, `metadata`, sign-in, token
-and search answer there, and every link they give names it. A request to
-another name for the listener, as `localhost` or `host.docker.internal`, is
-answered at that name. `POST <origin>/world-date` with the form field `asOf`
-moves the world's date (`asOf=` for every version).
+`npm run serve -- [--port <n>] [--as-of <instant>] [--host <name>]...` starts
+the hospitals in a process of their own and prints `Listening at <origin>`, then
+one line per hospital and name, `hospital <id> <base> <name>`: the id and the
+base never hold a space, so split on the first two, and the rest is the
+hospital's name. The bases are `<origin>/<id>/fhir`, then the same at
+`host.docker.internal` (for a caller in a container) and at each `--host`. A
+tool outside Node (Inferno, curl, an app in another language) needs only a
+base: discovery, `metadata`, sign-in, token and search answer there, and every
+link they give names it. A request to another name for the listener is
+answered at that name if it is an IP address, `localhost`,
+`host.docker.internal` or a `--host`, and is a 403 otherwise.
+`POST <origin>/world-date` with the form field `asOf` moves the world's date
+(`asOf=` for every version); one a browser sends from another site is a 403. A
+bad argument prints the usage and exits 2; exit 1 means the listener could not
+start.
 
-In Node, `serveDemo(hospitals, { port, asOf })` from
+In Node, `serveDemo(hospitals, { port, asOf, hosts })` from
 `@the-cascade-protocol/sandbox/node` does the same and resolves `{ origin,
 setWorldDate, close }`. `demoRemapFetch(origin)` is a `fetch` that sends a
 request for `https://<id>.demo.invalid/<rest>` to `<origin>/<id>/<rest>` with a
