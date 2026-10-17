@@ -8,7 +8,7 @@ import {
   loadHospitals,
   serveDemo,
 } from "../src/node/index.js";
-import { headersOf } from "../src/node/serve.js";
+import { send } from "../src/node/serve.js";
 import { pkcePair, signInAs } from "../src/testing.js";
 
 const REDIRECT = "https://app.example/callback";
@@ -264,7 +264,7 @@ test("two cookies set by one response reach the client as two headers", async ()
     const headers = new Headers({ "Content-Type": "text/plain" });
     headers.append("Set-Cookie", "a=1; Path=/");
     headers.append("Set-Cookie", "b=2; Path=/");
-    outgoing.writeHead(200, headersOf(headers)).end("ok");
+    void send(outgoing, new Response("ok", { headers }));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {

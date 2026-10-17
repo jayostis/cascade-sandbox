@@ -4,18 +4,20 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 concurrency:
-  group: check-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  group: check-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ github.event.action == 'edited' && 'edited' || 'code' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   check:
+    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -41,10 +43,13 @@ jobs:
       - id: runtime
         shell: bash
         env:
-          BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          number="$(printf '%s\n' "$BODY" | sed -nE 's#^Depends-On: https://github.com/jayostis/cascade-runtime-js/pull/([0-9]+)[[:space:]]*$#\1#p' | head -n 1)"
+          body=""
+          if [ -n "$NUMBER" ]; then body="$(gh pr view "$NUMBER" -R "$GITHUB_REPOSITORY" --json body -q .body)"; fi
+          number="$(printf '%s\n' "$body" | sed -nE 's#^Depends-On: https://github.com/jayostis/cascade-runtime-js/pull/([0-9]+)[[:space:]]*$#\1#p' | head -n 1)"
           if [ -n "$number" ]; then ref="refs/pull/${number}/head"; else ref=main; fi
           echo "the runtime at ${ref}"
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
@@ -65,8 +70,33 @@ jobs:
         working-directory: sandbox
       - run: npm ci
         working-directory: runtime
-      - run: npm install --no-save --install-links -w packages/cascade-runtime -w packages/site "$GITHUB_WORKSPACE/sandbox"
+      - name: install this build over the pin of every workspace that declares the sandbox
+        shell: bash
         working-directory: runtime
+        run: |
+          set -euo pipefail
+          npm query .workspace > "$RUNNER_TEMP/workspaces.json"
+          mapfile -t flags < <(node -e '
+            const fs = require("fs");
+            for (const w of JSON.parse(fs.readFileSync(process.argv[1], "utf8"))) {
+              const p = JSON.parse(fs.readFileSync(w.location + "/package.json", "utf8"));
+              const all = { ...p.dependencies, ...p.devDependencies, ...p.optionalDependencies, ...p.peerDependencies };
+              if ("@the-cascade-protocol/sandbox" in all) { console.log("-w"); console.log(w.location); }
+            }' "$RUNNER_TEMP/workspaces.json")
+          [ "${#flags[@]}" -gt 0 ] || { echo "no workspace declares the sandbox"; exit 1; }
+          npm install --no-save --install-links "${flags[@]}" "$GITHUB_WORKSPACE/sandbox"
+      - name: every installed sandbox is this build
+        shell: bash
+        working-directory: runtime
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r copy; do
+            diff -r "$GITHUB_WORKSPACE/sandbox/dist/src" "$copy/dist/src" > /dev/null || { echo "$copy is not this build"; exit 1; }
+            found=$((found + 1))
+          done < <(find . -path '*/node_modules/@the-cascade-protocol/sandbox' -prune -print)
+          [ "$found" -gt 0 ] || { echo "no installed sandbox"; exit 1; }
+          echo "$found installed copies, all this build"
       - run: npx tsc -b
         working-directory: runtime
       - run: >-

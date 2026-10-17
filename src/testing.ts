@@ -15,8 +15,39 @@ export function pkcePair(): { verifier: string; challenge: string } {
   };
 }
 
+/**
+ * Answers a hospital's sign-in page as `patient`: fetches the page at `authorizeUrl`, posts its form with
+ * `decision` (`allow` or `cancel`), and returns the callback URL the hospital redirects to.
+ */
+export async function answerSignIn(
+  fetch: typeof globalThis.fetch,
+  authorizeUrl: string | URL,
+  patient: string,
+  decision = "allow",
+): Promise<URL> {
+  const url = new URL(authorizeUrl);
+  const page = await fetch(url);
+  if (!page.ok)
+    throw new Error(
+      `${url.origin}${url.pathname} gave no sign-in page (${page.status})`,
+    );
+  const form = new URLSearchParams(url.search);
+  form.set("decision", decision);
+  form.set("patient", patient);
+  const answered = await fetch(`${url.origin}${url.pathname}`, {
+    method: "POST",
+    redirect: "manual",
+    body: form,
+  });
+  const location = answered.headers.get("Location");
+  if (!location)
+    throw new Error(
+      `${url.origin}${url.pathname} did not redirect ${patient} (${answered.status})`,
+    );
+  return new URL(location, url);
+}
+
 export interface SignedIn {
-  /** The access token. */
   token: string;
   /** The authorization code that was exchanged for it, now spent. */
   code: string;
@@ -73,29 +104,21 @@ export async function signInAs(
   const discovery = await (
     await fetch(`${base}/.well-known/smart-configuration`)
   ).json();
-  const approved = await fetch(discovery.authorization_endpoint, {
-    method: "POST",
-    redirect: "manual",
-    body: new URLSearchParams({
-      response_type: "code",
-      client_id: CLIENT,
-      redirect_uri: REDIRECT,
-      scope: options.scope ?? DEFAULT_SCOPE,
-      state: "s",
-      aud: base,
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-      decision: "allow",
-      patient,
-    }),
-  });
-  const code = new URL(approved.headers.get("Location") ?? "").searchParams.get(
+  const authorize = new URL(discovery.authorization_endpoint);
+  authorize.search = new URLSearchParams({
+    response_type: "code",
+    client_id: CLIENT,
+    redirect_uri: REDIRECT,
+    scope: options.scope ?? DEFAULT_SCOPE,
+    state: "s",
+    aud: base,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+  const code = (await answerSignIn(fetch, authorize, patient)).searchParams.get(
     "code",
   );
-  if (!code)
-    throw new Error(
-      `${base} did not give ${patient} a code (${approved.status})`,
-    );
+  if (!code) throw new Error(`${base} did not give ${patient} a code`);
   const answer = await (
     await fetch(discovery.token_endpoint, {
       method: "POST",

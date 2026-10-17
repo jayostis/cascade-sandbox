@@ -9,7 +9,7 @@ import {
   type Resource,
 } from "../src/index.js";
 import { loadHospital } from "../src/node/index.js";
-import { pkcePair, signInAs } from "../src/testing.js";
+import { answerSignIn, pkcePair, signInAs } from "../src/testing.js";
 
 const north = await loadHospital("cascade-north");
 const south = await loadHospital("cascade-south");
@@ -316,6 +316,18 @@ test("a patient signs in through the page, which says what the app asks in words
   assert.equal(cancelled.get("error"), "access_denied");
   assert.equal(cancelled.get("state"), "s-123");
   assert.equal(cancelled.get("code"), null);
+});
+
+test("answerSignIn gives the callback URL, with a code when allowed and an error when cancelled", async () => {
+  const hospital = demoHospital(north);
+  const through = (input: RequestInfo | URL, init?: RequestInit) =>
+    hospital(new Request(input, init));
+  const url = `${NORTH}/authorize?${authorizeQuery(NORTH)}`;
+  const allowed = await answerSignIn(through, url, B_NORTH);
+  assert.ok(allowed.searchParams.get("code"));
+  const cancelled = await answerSignIn(through, url, B_NORTH, "cancel");
+  assert.equal(cancelled.searchParams.get("error"), "access_denied");
+  assert.equal(cancelled.searchParams.get("code"), null);
 });
 
 test("the sign-in page preselects the patient its login_hint names, in either order of words, and no one otherwise", async () => {
