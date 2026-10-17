@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { test } from "node:test";
 import {
   type Bundle,
-  demoHospital,
   HospitalDataError,
   type Resource,
   versionsOf,
 } from "../src/index.js";
 import { loadHospital } from "../src/node/index.js";
+import { signInAs } from "../src/testing.js";
 import {
   compileShorthand,
   type ShorthandBundle,
@@ -80,50 +79,17 @@ test("a shorthand compiles to the versions of the hospital's file, and the hospi
     "Observation/o1": ["1@2023-01-10T09:00:00Z"],
   });
 
-  const verifier =
-    "a-verifier-long-enough-to-be-a-real-pkce-code-verifier-0123";
-  const redirect = "https://app.example/callback";
   const asked = async (asOf: string) => {
-    const options = { hospital, patients: { p1: compiled }, asOf };
-    const hosted = demoHospital({ ...options, autoApprove: "p1" });
-    const back = await hosted(
-      new Request(
-        `${BASE}/authorize?${new URLSearchParams({
-          response_type: "code",
-          client_id: "test-app",
-          redirect_uri: redirect,
-          scope: "launch/patient patient/*.rs",
-          aud: BASE,
-          code_challenge: createHash("sha256")
-            .update(verifier)
-            .digest("base64url"),
-          code_challenge_method: "S256",
-        })}`,
-      ),
+    const { hospital: hosted, token } = await signInAs(
+      { hospital, patients: { p1: compiled }, asOf },
+      "p1",
     );
-    const code = new URL(back.headers.get("Location") ?? "").searchParams.get(
-      "code",
-    );
-    const token = await (
-      await hosted(
-        new Request(`${BASE}/token`, {
-          method: "POST",
-          body: new URLSearchParams({
-            grant_type: "authorization_code",
-            code: code ?? "",
-            redirect_uri: redirect,
-            client_id: "test-app",
-            code_verifier: verifier,
-          }),
-        }),
-      )
-    ).json();
     const search = async (type: string) =>
       (
         (await (
           await hosted(
             new Request(`${BASE}/${type}?patient=p1`, {
-              headers: { Authorization: `Bearer ${token.access_token}` },
+              headers: { Authorization: `Bearer ${token}` },
             }),
           )
         ).json()) as Bundle

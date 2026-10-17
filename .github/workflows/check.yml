@@ -28,3 +28,52 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+
+  # The runtime's own tests of the rulings a sandbox pull request could break, run against this pull request's sandbox:
+  # on the runtime pull request a `Depends-On:` line names, else on its main.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: sandbox
+          persist-credentials: false
+      - id: runtime
+        shell: bash
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          number="$(printf '%s\n' "$BODY" | sed -nE 's#^Depends-On: https://github.com/jayostis/cascade-runtime-js/pull/([0-9]+)[[:space:]]*$#\1#p' | head -n 1)"
+          if [ -n "$number" ]; then ref="refs/pull/${number}/head"; else ref=main; fi
+          echo "the runtime at ${ref}"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: jayostis/cascade-runtime-js
+          ref: ${{ steps.runtime.outputs.ref }}
+          path: runtime
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            sandbox/package-lock.json
+            runtime/package-lock.json
+      - run: npm ci
+        working-directory: sandbox
+      - run: npm ci
+        working-directory: runtime
+      - run: npm install --no-save --install-links -w packages/cascade-runtime "$GITHUB_WORKSPACE/sandbox"
+        working-directory: runtime
+      - run: npx tsc -b
+        working-directory: runtime
+      - run: >-
+          node --test
+          packages/cascade-runtime/dist/test/connect.test.js
+          packages/cascade-runtime/dist/test/pull.test.js
+          packages/cascade-runtime/dist/test/directory.test.js
+        working-directory: runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

@@ -16,6 +16,16 @@ export interface DemoListener {
   close(): Promise<void>;
 }
 
+/** A response's headers as `writeHead` takes them, each `Set-Cookie` kept as a header of its own. */
+export function headersOf(headers: Headers): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const [name, value] of headers)
+    if (name !== "set-cookie") out[name] = value;
+  const cookies = headers.getSetCookie();
+  if (cookies.length > 0) out["set-cookie"] = cookies;
+  return out;
+}
+
 function refusal(status: number, why: string): Response {
   return new Response(why, {
     status,
@@ -118,10 +128,7 @@ export async function serveDemo(
       response = await route(request);
     }
     const payload = Buffer.from(await response.arrayBuffer());
-    outgoing.writeHead(
-      response.status,
-      Object.fromEntries(response.headers.entries()),
-    );
+    outgoing.writeHead(response.status, headersOf(response.headers));
     outgoing.end(payload);
   }
 
