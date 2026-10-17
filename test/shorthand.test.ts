@@ -20,7 +20,7 @@ const BASE = hospital.fhirBase;
 const person: Resource = {
   resourceType: "Patient",
   id: "p1",
-  name: [{ family: "Vale", given: ["Tamsin"] }],
+  name: [{ family: "Quill", given: ["Hedda"] }],
 };
 const med: Resource = {
   resourceType: "MedicationStatement",
@@ -60,11 +60,11 @@ test("a shorthand compiles to the versions of the hospital's file, and the hospi
       },
       { resource: result },
     ),
-    "tamsin.json",
+    "hedda.json",
   );
   assert.equal(compiled.type, "history");
   const times = Object.fromEntries(
-    [...versionsOf(compiled, "tamsin.json")].map(([record, versions]) => [
+    [...versionsOf(compiled, "hedda.json")].map(([record, versions]) => [
       record,
       versions.map(({ versionId, recorded }) => `${versionId}@${recorded}`),
     ]),
@@ -204,10 +204,10 @@ test("a shorthand is refused where its dates cannot say the change", () => {
   ];
   for (const [name, input, reason] of rows) {
     assert.throws(
-      () => compileShorthand(input, "tamsin.json"),
+      () => compileShorthand(input, "hedda.json"),
       (error) =>
         error instanceof HospitalDataError &&
-        error.where === "tamsin.json" &&
+        error.where === "hedda.json" &&
         error.reason === reason,
       name,
     );

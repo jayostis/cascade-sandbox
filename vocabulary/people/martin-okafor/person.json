@@ -1,0 +1,12 @@
+{
+  "id": "martin-okafor",
+  "name": { "family": "Okafor", "given": ["Martin"] },
+  "birthDate": "1979-02-08",
+  "gender": "unknown",
+  "subject": {
+    "iri": "urn:uuid:fc701698-ca04-470f-9576-d057826b1d08",
+    "name": "Martin",
+    "storage": "https://pod.martin-okafor.example/"
+  },
+  "kit": "conformance/martin-okafor"
+}

@@ -74,7 +74,7 @@ const obs = (id: string): Resource => ({
 const PATIENTS: Record<string, Bundle> = {
   p1: history(
     version(med("completed"), "2", "2024-04-15T16:00:00Z"),
-    version(person("p1", "Vale"), "1", "2020-01-01T00:00:00Z"),
+    version(person("p1", "Wick"), "1", "2020-01-01T00:00:00Z"),
     version(med("active"), "1", "2022-03-01T00:00:00Z"),
     version(obs("o1"), "1", "2023-01-01T00:00:00Z"),
     version(obs("o2"), "1", "2023-02-01T00:00:00Z"),
@@ -395,7 +395,7 @@ test("a patient not at the hospital at T is not listed, cannot be picked, and th
     [...page.matchAll(/<label class="choice">[^>]*> ([^<]*)<\/label>/g)].map(
       ([, name]) => name,
     ),
-    ["Brook, Ana", "Vale, Ana"],
+    ["Brook, Ana", "Wick, Ana"],
   );
   const plain = await pageAt();
   assert.ok(!plain.includes('class="as-of"'));
@@ -488,7 +488,7 @@ test("the hospital's scopes grant what SMART says each grants", async () => {
 test("bad data and a bad asOf are refused with a reason, by the hospital and by its loader", async (t) => {
   const c1 = (at: string, versionId = "1") =>
     version({ resourceType: "Condition", id: "c1" }, versionId, at);
-  const p1 = version(person("p1", "Vale"), "1", "2020-01-01T00:00:00Z");
+  const p1 = version(person("p1", "Wick"), "1", "2020-01-01T00:00:00Z");
   const at = "2024-01-01T00:00:00Z";
   const later = "2024-02-01T00:00:00Z";
   type Editable = {
@@ -514,8 +514,8 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
           resourceType: "Bundle",
           type: "collection",
           entry: [
-            { resource: person("p1", "Vale") },
-            { resource: person("p1", "Vale") },
+            { resource: person("p1", "Wick") },
+            { resource: person("p1", "Wick") },
           ],
         },
       },
@@ -654,7 +654,7 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
     ],
     [
       "a file named for another patient",
-      { p1: history(version(person("p9", "Vale"), "1", at)) },
+      { p1: history(version(person("p9", "Wick"), "1", at)) },
       "holds Patient p9, not p1",
     ],
   ];
@@ -665,22 +665,43 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
 
   const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
   t.after(() => rm(folder, { recursive: true, force: true }));
+  const roots = {
+    hospitals: [join(folder, "hospitals")],
+    people: [join(folder, "people")],
+  };
+  await mkdir(join(folder, "hospitals", "cascade-north"), { recursive: true });
+  await writeFile(
+    join(folder, "hospitals", "cascade-north", "hospital.json"),
+    JSON.stringify(hospital),
+  );
   for (const [name, patients, reason, where = "patients/p1.json"] of rows) {
     assert.throws(
       () => demoHospital({ hospital, patients }),
       refused(where, reason),
       name,
     );
-    await rm(join(folder, "patients"), { recursive: true, force: true });
-    await mkdir(join(folder, "patients"));
-    await writeFile(join(folder, "hospital.json"), JSON.stringify(hospital));
+    if (reason.startsWith("holds Patient")) continue;
+    await rm(roots.people[0]!, { recursive: true, force: true });
     for (const [id, bundle] of Object.entries(patients)) {
+      const source = join(roots.people[0]!, id, "sources", "cascade-north");
+      await mkdir(source, { recursive: true });
+      await writeFile(join(source, "fhir.json"), JSON.stringify(bundle));
       await writeFile(
-        join(folder, "patients", `${id}.json`),
-        JSON.stringify(bundle),
+        join(roots.people[0]!, id, "person.json"),
+        JSON.stringify({
+          id,
+          name: { family: id === "p2" ? "Brook" : "Wick", given: ["Ana"] },
+          birthDate: "1970-01-01",
+          gender: "unknown",
+        }),
       );
     }
-    await assert.rejects(loadHospital(folder), refused(where, reason), name);
+    const patient = /^patients\/(.*)\.json$/.exec(where)![1];
+    await assert.rejects(
+      loadHospital("cascade-north", roots),
+      refused(`${patient}/sources/cascade-north/fhir.json`, reason),
+      name,
+    );
   }
 
   for (const asOf of [

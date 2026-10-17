@@ -1,0 +1,24 @@
+{
+  "hospital": "cascade-north",
+  "story": "Lab moved after a start",
+  "findings": [
+    {
+      "kind": "after start",
+      "medication": "314076",
+      "test": "2823-3",
+      "date": "2024-02-12",
+      "direction": "up",
+      "unit": "mmol/L",
+      "before": [
+        { "date": "2023-08-14", "value": 4.1 },
+        { "date": "2023-11-13", "value": 4.0 },
+        { "date": "2024-02-05", "value": 4.2 }
+      ],
+      "after": [
+        { "date": "2024-05-13", "value": 4.7 },
+        { "date": "2024-08-12", "value": 5.0 },
+        { "date": "2024-11-11", "value": 5.3 }
+      ]
+    }
+  ]
+}

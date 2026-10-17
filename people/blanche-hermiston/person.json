@@ -1,0 +1,24 @@
+{
+  "id": "blanche-hermiston",
+  "name": {
+    "family": "Hermiston",
+    "given": [
+      "Blanche"
+    ]
+  },
+  "birthDate": "1961-07-22",
+  "gender": "female",
+  "generated": {
+    "by": "synthea 4.0.0",
+    "syntheaId": "18a08f42-e19d-3072-8737-90a26ea0cb6d",
+    "seed": 90,
+    "clinicianSeed": 90,
+    "referenceDate": "2026-10-01",
+    "endDate": "2026-10-01",
+    "arguments": "-p 40 -a 45-80 Washington",
+    "hospitals": [
+      "cascade-north",
+      "cascade-south"
+    ]
+  }
+}

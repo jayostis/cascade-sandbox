@@ -10,8 +10,9 @@
   },
   "files": [
     "dist/src",
-    "data",
-    "stories"
+    "hospitals",
+    "people",
+    "vocabulary"
   ],
   "exports": {
     ".": "./dist/src/index.js",
@@ -29,7 +30,8 @@
     "test": "node -e \"for(const p of ['dist/test','dist/tsconfig.test.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\" && tsc -b tsconfig.test.json && node --test \"dist/test/**/*.test.js\"",
     "synthea": "tsc -b && node dist/src/node/synthea-cli.js",
     "validate:data": "tsc -b && node validator/validate.mjs",
-    "export": "tsc -b && node dist/src/node/export-cli.js"
+    "export": "tsc -b && node dist/src/node/export-cli.js",
+    "people": "tsc -b && node dist/src/node/people-cli.js"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

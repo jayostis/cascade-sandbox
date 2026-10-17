@@ -34,8 +34,8 @@ export interface Story {
   hospital: string;
   story: string;
   findings: StoryFinding[];
-  /** The file name, under the stories folder, of the same record as a C-CDA document. */
-  ccda?: string;
+  /** The absolute path of the same record as a C-CDA document, where the person has one. */
+  ccdaFile?: string;
   /** The pulls a conformance kit saves of the story, in the order they are made. */
   pulls?: StoryPull[];
 }

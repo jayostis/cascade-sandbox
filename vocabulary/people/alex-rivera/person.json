@@ -1,0 +1,12 @@
+{
+  "id": "alex-rivera",
+  "name": { "family": "Rivera", "given": ["Alex"] },
+  "birthDate": "1985-03-15",
+  "gender": "female",
+  "subject": {
+    "iri": "urn:uuid:5d0c8f3e-2b71-4c9a-8e44-7a1f0b9c3d26",
+    "name": "Alex",
+    "storage": "https://pod.alex-rivera.example/"
+  },
+  "kit": "conformance/alex-rivera"
+}
