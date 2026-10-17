@@ -51,6 +51,13 @@ const AUTHORIZE_PARAMETERS = [
   "code_challenge",
   "code_challenge_method",
 ];
+
+interface Face {
+  readonly base: string;
+  readonly authorizeUrl: string;
+  readonly tokenUrl: string;
+}
+
 export function demoHospital(options: DemoHospitalOptions): DemoHospital {
   const { hospital, asOf } = options;
   if (asOf !== undefined && !isInstant(asOf)) {
@@ -79,8 +86,19 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       ),
     ]),
   );
-  const authorizeUrl = options.authorizeUrl ?? `${base}/authorize`;
-  const tokenUrl = `${base}/token`;
+  const own: Face = {
+    base,
+    authorizeUrl: options.authorizeUrl ?? `${base}/authorize`,
+    tokenUrl: `${base}/token`,
+  };
+  const faceAt = (at: string): Face => {
+    const there = at.replace(/\/$/, "");
+    return {
+      base: there,
+      authorizeUrl: `${there}/authorize`,
+      tokenUrl: `${there}/token`,
+    };
+  };
   const now = options.now ?? (() => new Date());
   const signer = new Signer(hospital.key);
   const hidden = new Set(hospital.hiddenFromSearch);
@@ -93,6 +111,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
   const seconds = () => Math.floor(now().getTime() / 1000);
 
   async function authorize(
+    face: Face,
     parameters: URLSearchParams,
     form: boolean,
   ): Promise<Response> {
@@ -124,7 +143,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     if (
       !parameters.get("code_challenge") ||
       parameters.get("code_challenge_method") !== "S256" ||
-      (parameters.get("aud") ?? "").replace(/\/$/, "") !== base
+      (parameters.get("aud") ?? "").replace(/\/$/, "") !== face.base
     ) {
       return back({ error: "invalid_request" });
     }
@@ -147,7 +166,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     } else if (options.autoApprove !== undefined) {
       patient = options.autoApprove;
     } else {
-      return html(200, signInPage(parameters));
+      return html(200, signInPage(face, parameters));
     }
 
     const code = await signer.sign({
@@ -163,7 +182,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     return back({ code });
   }
 
-  function signInPage(parameters: URLSearchParams): string {
+  function signInPage(face: Face, parameters: URLSearchParams): string {
     const hiddenInputs = AUTHORIZE_PARAMETERS.filter((name) =>
       parameters.has(name),
     )
@@ -211,7 +230,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       hospital,
       `<h1>Sign in</h1>${asOfLine}
       <p>The app <strong>${escape(parameters.get("client_id") ?? "")}</strong> wants to connect to your record at ${escape(hospital.name)}.</p>
-      <form method="post" action="${escape(authorizeUrl)}">
+      <form method="post" action="${escape(face.authorizeUrl)}">
         ${hiddenInputs}
         <fieldset>
         <legend>Sign in as</legend>
@@ -298,7 +317,11 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     });
   }
 
-  async function fhir(request: Request, url: URL): Promise<Response> {
+  async function fhir(
+    { base }: Face,
+    request: Request,
+    url: URL,
+  ): Promise<Response> {
     const bearer = /^Bearer (.+)$/.exec(
       request.headers.get("Authorization") ?? "",
     )?.[1];
@@ -375,7 +398,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
         return outcome(404, "not-found", `No ${record}.`);
       }
       if (history !== undefined) {
-        return historyOf(type, record, versions, url.searchParams);
+        return historyOf(base, type, record, versions, url.searchParams);
       }
       const resource = versions.at(-1)?.resource;
       return resource
@@ -450,6 +473,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
   }
 
   function historyOf(
+    base: string,
     type: string,
     record: string,
     versions: readonly RecordVersion[],
@@ -511,14 +535,67 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     return charts.get(patient)?.get(`Patient/${patient}`)?.at(-1)?.resource;
   }
 
-  return async (request) => {
+  function capabilities({ base, authorizeUrl, tokenUrl }: Face) {
+    const interactions = (type: string) =>
+      ["read", "vread", "history-instance"]
+        .concat(type === "Patient" ? [] : ["search-type"])
+        .map((code) => ({ code }));
+    return {
+      resourceType: "CapabilityStatement",
+      status: "active",
+      date: now().toISOString(),
+      kind: "instance",
+      implementation: { description: hospital.name, url: base },
+      fhirVersion: "4.0.1",
+      format: ["json"],
+      rest: [
+        {
+          mode: "server",
+          security: {
+            extension: [
+              {
+                url: "http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris",
+                extension: [
+                  { url: "authorize", valueUri: authorizeUrl },
+                  { url: "token", valueUri: tokenUrl },
+                ],
+              },
+            ],
+            service: [
+              {
+                coding: [
+                  {
+                    system:
+                      "http://terminology.hl7.org/CodeSystem/restful-security-service",
+                    code: "SMART-on-FHIR",
+                  },
+                ],
+              },
+            ],
+          },
+          resource: hospital.types.map((type) => ({
+            type,
+            interaction: interactions(type),
+          })),
+        },
+      ],
+    };
+  }
+
+  return async (request, at) => {
+    const face = at === undefined ? own : faceAt(at);
+    const { base, authorizeUrl, tokenUrl } = face;
     const url = new URL(request.url);
     const address = `${url.origin}${url.pathname}`.replace(/\/$/, "");
     if (address === authorizeUrl.replace(/\/$/, "")) {
-      if (request.method === "GET") return authorize(url.searchParams, false);
+      if (request.method === "GET")
+        return authorize(face, url.searchParams, false);
       if (request.method === "POST") {
-        return authorize(new URLSearchParams(await request.text()), true);
+        return authorize(face, new URLSearchParams(await request.text()), true);
       }
+    }
+    if (address === `${base}/metadata` && request.method === "GET") {
+      return fhirJson(200, capabilities(face));
     }
     if (address === `${base}/.well-known/smart-configuration`) {
       if (request.method !== "GET") return notAllowed("GET");
@@ -544,7 +621,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       return exchange(new URLSearchParams(await request.text()));
     }
     if (address.startsWith(`${base}/`) && request.method === "GET") {
-      return fhir(request, url);
+      return fhir(face, request, url);
     }
     return outcome(404, "not-found", `${hospital.name} has nothing here.`);
   };

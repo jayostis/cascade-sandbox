@@ -177,3 +177,33 @@ reading prose; and the body is an OperationOutcome, as every FHIR error here is,
 
 Pinned by `hospital.test.ts`, "each error switch fails at its own step, as smart-launcher-v2 does, and an unknown one is
 refused".
+
+## A direct caller gets the hospital at the base it asked
+
+The listener (`serveDemo`, `npm run serve`) answers a request with no `Forwarded` header as the hospital at
+`http://<host>/<id>/fhir`, where `<host>` is the request's `Host`. Discovery, the sign-in page, the token endpoint, every
+`fullUrl`, `self` and `next`, and the issuer are built from that base, and the authorize request's `aud` must be it. A
+remapped request (with `Forwarded`) answers at `https://<id>.demo.invalid/fhir` as before. Records are keyed by
+`<type>/<id>`, so the same records are served at either base.
+
+> "The "Host" header field in a request provides the host and port information from the target URI"
+
+RFC 9110, [section 7.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.2), read 2026-10-17. The base is the
+`Host` asked, not the address the listener bound, so a tool that reaches it under another name (`localhost`, or
+`host.docker.internal` from a container) is handed links it can follow. `aud` is still one URL, the base the request came
+to (see "`aud` is one URL").
+
+Each base also answers `GET <base>/metadata`, with no token, as a CapabilityStatement naming the resource types, their
+interactions, and the authorize and token endpoints in the `oauth-uris` extension.
+
+> "Applications SHALL return a resource that describes the functionality of the server end-point."
+
+FHIR R4, RESTful API, [capabilities](https://hl7.org/fhir/R4/http.html#capabilities), read 2026-10-17. SMART App Launch
+2.2.0 ([Conformance](https://hl7.org/fhir/smart-app-launch/conformance.html), read 2026-10-17) says the endpoints "were
+also conveyed in a server's CapabilityStatement" in earlier versions and that "this mechanism is now deprecated": the
+extension is kept for clients and test kits written against SMART 1.0, and `.well-known/smart-configuration` stays the
+source.
+
+Pinned by `serve.test.ts`, "a caller with only the listener's address discovers, signs in, searches and pages, every
+link at the listener", "a direct sign-in takes the base it came to as aud, and refuses the hospital's own" and "a direct
+caller gets the hospital at the host it asked".

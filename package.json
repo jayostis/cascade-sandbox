@@ -31,6 +31,7 @@
     "synthea": "tsc -b && node dist/src/node/synthea-cli.js",
     "validate:data": "tsc -b && node validator/validate.mjs",
     "export": "tsc -b && node dist/src/node/export-cli.js",
+    "serve": "tsc -b && node dist/src/node/serve-cli.js",
     "people": "tsc -b && node dist/src/node/people-cli.js"
   },
   "devDependencies": {

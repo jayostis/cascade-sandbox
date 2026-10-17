@@ -129,13 +129,22 @@ people's codes; `vocabulary/people/README.md` carries the hand-written ones'.
 
 ## A real address
 
-`serveDemo(hospitals)` from `@the-cascade-protocol/sandbox/node` listens on
-`127.0.0.1` at a port the system picks and resolves `{ origin, setWorldDate,
-close }`. `demoRemapFetch(origin)` is a `fetch` that sends a request for
-`https://<id>.demo.invalid/<rest>` to `<origin>/<id>/<rest>` with a `Forwarded`
-header naming the host asked, and every other request to the real `fetch`. The
-listener rebuilds the address from that header, so each hospital answers at its
-own base and every link in its records names `<id>.demo.invalid`. The sign-in
-pages are the listener's own, `<origin>/<id>/authorize`, which a browser can
-open; a request with no `Forwarded` header gets nothing else (a 404), and one
-whose host is not the path's hospital is a 400.
+`npm run serve -- [--port <n>] [--as-of <instant>]` starts the hospitals in a
+process of their own and prints `Listening at <origin>` and each hospital's
+base, `<origin>/<id>/fhir`. A tool outside Node (Inferno, curl, an app in
+another language) needs only that base: discovery, `metadata`, sign-in, token
+and search answer there, and every link they give names it. A request to
+another name for the listener, as `localhost` or `host.docker.internal`, is
+answered at that name. `POST <origin>/world-date` with the form field `asOf`
+moves the world's date (`asOf=` for every version).
+
+In Node, `serveDemo(hospitals, { port, asOf })` from
+`@the-cascade-protocol/sandbox/node` does the same and resolves `{ origin,
+setWorldDate, close }`. `demoRemapFetch(origin)` is a `fetch` that sends a
+request for `https://<id>.demo.invalid/<rest>` to `<origin>/<id>/<rest>` with a
+`Forwarded` header naming the host asked, and every other request to the real
+`fetch`. The listener rebuilds the address from that header, so each hospital
+answers at its own base and every link in its records names
+`<id>.demo.invalid`. The remapped sign-in pages are the listener's own,
+`<origin>/<id>/authorize`, which a browser can open; a request whose
+`Forwarded` host is not the path's hospital is a 400.
