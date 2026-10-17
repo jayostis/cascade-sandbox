@@ -249,3 +249,28 @@ Metadata](https://www.w3.org/TR/fetch-metadata/) defines the header.
 
 Pinned by `serve.test.ts`, "a POST to the listener's world-date moves the world's date for the next answer, and refuses
 what is not an instant or comes from another site".
+
+## A browser app may call discovery, the token endpoint and the API from any origin
+
+`.well-known/smart-configuration`, `metadata`, the token endpoint and every FHIR API answer carry
+`Access-Control-Allow-Origin: *`; a preflight `OPTIONS` to those paths is a 204 with `Access-Control-Allow-Methods: GET, POST`
+and `Access-Control-Allow-Headers: Authorization, Content-Type, Accept`. `Access-Control-Allow-Credentials` is never sent:
+nothing uses cookies, and the API needs a bearer token. The sign-in page, the authorize endpoint and `POST /world-date` carry
+no CORS header, and `/world-date` keeps its cross-site refusal. The Host allowlist applies first, to every request. The token
+response also carries `Pragma: no-cache` beside `Cache-Control: no-store`.
+
+> "Servers that support purely browser-based apps SHALL enable Cross-Origin Resource Sharing (CORS) as follows:" ... "For
+> requests from any origin, CORS configuration permits access to the public discovery endpoints" (`.well-known/smart-configuration`
+> and `metadata`) ... "For requests from a client's registered origin(s), CORS configuration permits access to the token
+> endpoint" and to FHIR REST API endpoints.
+
+SMART App Launch, [Considerations for Cross-Origin Resource Sharing (CORS)
+support](https://hl7.org/fhir/smart-app-launch/app-launch.html), read 2026-10-17. The sandbox has no client registration, so
+every origin is a registered one: `*`. FHIR R4, [HTTP, Security](https://hl7.org/fhir/R4/http.html), read 2026-10-17: "to
+support browser-based client applications, servers SHOULD implement cross-origin resource sharing (CORS)" for the interactions
+documented there. `Pragma: no-cache` is [RFC 6749 §5.1](https://www.rfc-editor.org/rfc/rfc6749#section-5.1), which asks a
+token response for `Cache-Control: no-store` and `Pragma: no-cache`. I1's Inferno run found the missing headers
+(`epic-people/i1-inferno.md`).
+
+Pinned by `serve.test.ts`, "a browser app may read discovery, the token endpoint and the API from any origin, and the sign-in
+page and world-date from none".

@@ -189,6 +189,50 @@ test("a direct caller gets the hospital at the host it asked", async () => {
   );
 });
 
+test("a browser app may read discovery, the token endpoint and the API from any origin, and the sign-in page and world-date from none", async () => {
+  const base = `${listener.origin}/cascade-north`;
+  const rows: [string, string, string, number, boolean][] = [
+    ["GET", `${base}/fhir/.well-known/smart-configuration`, "", 200, true],
+    ["GET", `${base}/fhir/metadata`, "", 200, true],
+    ["POST", `${base}/fhir/token`, "grant_type=nothing", 400, true],
+    ["GET", `${base}/fhir/Patient`, "", 401, true],
+    ["OPTIONS", `${base}/fhir/token`, "", 204, true],
+    ["OPTIONS", `${base}/fhir/Patient`, "", 204, true],
+    ["OPTIONS", `${base}/fhir/metadata`, "", 204, true],
+    ["GET", `${base}/authorize`, "", 400, false],
+    ["OPTIONS", `${base}/authorize`, "", 404, false],
+    ["POST", `${listener.origin}/world-date`, "asOf=", 200, false],
+    ["OPTIONS", `${listener.origin}/world-date`, "", 405, false],
+  ];
+  for (const [method, url, body, status, cors] of rows) {
+    const response = await fetch(url, {
+      method,
+      body: body === "" ? undefined : body,
+      headers:
+        body === ""
+          ? {}
+          : { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    const why = `${method} ${url}`;
+    assert.equal(response.status, status, why);
+    const header = (name: string) => response.headers.get(name);
+    assert.equal(header("Access-Control-Allow-Origin"), cors ? "*" : null, why);
+    assert.equal(header("Access-Control-Allow-Credentials"), null, why);
+    if (cors && method === "OPTIONS") {
+      assert.equal(header("Access-Control-Allow-Methods"), "GET, POST", why);
+      assert.equal(
+        header("Access-Control-Allow-Headers"),
+        "Authorization, Content-Type, Accept",
+        why,
+      );
+    }
+    if (url.endsWith("/token") && method === "POST") {
+      assert.equal(header("Cache-Control"), "no-store", why);
+      assert.equal(header("Pragma"), "no-cache", why);
+    }
+  }
+});
+
 test("a request the listener cannot place, or whose Host it does not answer, is refused, each for its reason", async () => {
   const forwarded = (host: string, proto = "https") => ({
     Forwarded: `host=${host};proto=${proto}`,

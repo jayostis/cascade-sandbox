@@ -1,4 +1,10 @@
-export const NO_STORE = { "Cache-Control": "no-store" };
+export const NO_STORE = { "Cache-Control": "no-store", Pragma: "no-cache" };
+
+export const PREFLIGHT = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept",
+};
 const FHIR_JSON = "application/fhir+json";
 
 export function html(status: number, body: string): Response {

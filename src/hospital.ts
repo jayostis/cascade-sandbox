@@ -19,6 +19,7 @@ import {
 } from "./request.js";
 import {
   NO_STORE,
+  PREFLIGHT,
   fhirJson,
   html,
   json,
@@ -601,7 +602,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     };
   }
 
-  return async (request, at) => {
+  const handle = async (request: Request, at?: string): Promise<Response> => {
     const face = at === undefined ? own : faceAt(at);
     const { base, authorizeUrl, tokenUrl } = face;
     const url = new URL(request.url);
@@ -643,5 +644,27 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       return fhir(face, request, url);
     }
     return outcome(404, "not-found", `${hospital.name} has nothing here.`);
+  };
+
+  return async (request, at) => {
+    const face = at === undefined ? own : faceAt(at);
+    const { base, tokenUrl, authorizeUrl } = face;
+    const url = new URL(request.url);
+    const address = `${url.origin}${url.pathname}`.replace(/\/$/, "");
+    if (
+      address === authorizeUrl.replace(/\/$/, "") ||
+      (address !== tokenUrl && !address.startsWith(`${base}/`))
+    )
+      return handle(request, at);
+    if (request.method === "OPTIONS")
+      return new Response(null, { status: 204, headers: PREFLIGHT });
+    const response = await handle(request, at);
+    const headers = new Headers(response.headers);
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   };
 }
