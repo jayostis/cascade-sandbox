@@ -241,7 +241,10 @@ function personFrom(patient: Record<string, unknown>, where: string): Person {
   )
     throw lacks("name of family and given names");
   if (typeof patient.birthDate !== "string") throw lacks("birthDate");
-  if (typeof patient.gender !== "string") throw lacks("gender");
+  if (
+    !["male", "female", "other", "unknown"].includes(patient.gender as string)
+  )
+    throw lacks("gender");
   return {
     id,
     name: { family: name.family, given: name.given },
@@ -346,4 +349,5 @@ export async function addPatient(
   return path;
 }
 
+export { exportCollection } from "../export.js";
 export * from "./serve.js";
