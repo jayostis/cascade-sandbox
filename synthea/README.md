@@ -31,13 +31,13 @@ With Docker, from the repository's root, in a POSIX shell:
 ```sh
 mkdir -p build/synthea
 docker run --rm \
-  -v "$PWD/packages/demo-hospital/synthea:/synthea:ro" \
+  -v "$PWD/synthea:/synthea:ro" \
   -v "$PWD/build/synthea:/out" \
   eclipse-temurin:21-jre@sha256:cff19e6215689161eb6162c11b86b0c60ddf802164f2eaf48d570f8fb79a36c5 \
   bash -c 'curl -sSL -o /tmp/synthea.jar https://github.com/synthetichealth/synthea/releases/download/v4.0.0/synthea-with-dependencies.jar \
     && echo "ed43c20ad40ba5c3bc724503a5af032715fe3c491620b766148e7c2361e6ecc1  /tmp/synthea.jar" | sha256sum -c - \
     && java -jar /tmp/synthea.jar -c /synthea/synthea.properties -s 90 -cs 90 -r 20261001 -e 20261001 -p 40 -a 45-80 Washington'
-npm run synthea -w @cascade-runtime/demo-hospital -- "$PWD/build/synthea"
+npm run synthea -- "$PWD/build/synthea"
 ```
 
 Synthea writes 40 people, of whom three are kept. `npm run synthea` replaces
