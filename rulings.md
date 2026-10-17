@@ -177,3 +177,100 @@ reading prose; and the body is an OperationOutcome, as every FHIR error here is,
 
 Pinned by `hospital.test.ts`, "each error switch fails at its own step, as smart-launcher-v2 does, and an unknown one is
 refused".
+
+## A direct caller gets the hospital at the base it asked
+
+The listener (`serveDemo`, `npm run serve`) answers a request with no `Forwarded` header as the hospital at
+`http://<host>/<id>/fhir`, where `<host>` is the request's `Host`. Discovery, the sign-in page, the token endpoint, every
+`fullUrl`, `self` and `next`, and the issuer are built from that base, and the authorize request's `aud` must be it. A
+remapped request (with `Forwarded`) answers at `https://<id>.demo.invalid/fhir` as before. Records are keyed by
+`<type>/<id>`, so the same records are served at either base.
+
+> "The "Host" header field in a request provides the host and port information from the target URI"
+
+RFC 9110, [section 7.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.2), read 2026-10-17. The base is the
+`Host` asked, not the address the listener bound, so a tool that reaches it under another name (`localhost`, or
+`host.docker.internal` from a container) is handed links it can follow. `aud` is still one URL, the base the request came
+to (see "`aud` is one URL").
+
+Each base also answers `GET <base>/metadata`, with no token, as a CapabilityStatement naming the resource types, their
+interactions, and the authorize and token endpoints in the `oauth-uris` extension. Each searchable type declares the
+`patient` search parameter, which every search needs, and `category` where the type's `category` is a CodeableConcept
+and the search matches its codings; a client that plans its queries from `metadata` learns both.
+
+> "Applications SHALL return a resource that describes the functionality of the server end-point."
+
+FHIR R4, RESTful API, [capabilities](https://hl7.org/fhir/R4/http.html#capabilities), read 2026-10-17. SMART App Launch
+2.2.0 ([Conformance](https://hl7.org/fhir/smart-app-launch/conformance.html), read 2026-10-17) says the endpoints "were
+also conveyed in a server's CapabilityStatement" in earlier versions and that "this mechanism is now deprecated": the
+extension is kept for clients and test kits written against SMART 1.0, and `.well-known/smart-configuration` stays the
+source.
+
+Pinned by `serve.test.ts`, "a caller with only the listener's address discovers, signs in, searches and pages, every
+link at the listener", "a direct sign-in takes the base it came to as aud, and refuses the hospital's own" and "a direct
+caller gets the hospital at the host it asked".
+
+## The listener answers only the names it was given
+
+Every request to the listener, remapped or direct, whose `Host` names anything but an IP literal, `localhost`,
+`host.docker.internal`, or a name given by `--host <name>` (`serveDemo({ hosts })`) is a 403 with one sentence naming
+`--host`. The base follows `Host`, so without this a page at a name re-pointed at 127.0.0.1 (DNS rebinding) is
+same-origin with a hospital: it signs in, takes the code, exchanges it and reads every record, with an `aud` that
+matches because it chose the `Host`. An IP literal is always safe, because a rebinding page's origin is a domain name.
+`demoRemapFetch` sends `Host: 127.0.0.1:<port>`, so remapped answers are unchanged.
+
+> "Non-HTTPS servers are vulnerable to DNS rebinding attacks without validation on the Host header."
+
+Vite, [CVE-2025-24010](https://github.com/vitejs/vite/security/advisories/GHSA-vg6x-rcgg-rjx6), read 2026-10-17, fixed
+by [`server.allowedHosts`](https://vite.dev/config/server-options): "localhost and domains under .localhost and all IP
+addresses are allowed by default". webpack-dev-server's CVE-2018-14732 was fixed the same way (`allowedHosts`), as Rails
+guards with `config.hosts` ([HostAuthorization](https://guides.rubyonrails.org/configuring.html), "Prevents against DNS
+rebinding and other Host header attacks") and Django with
+[`ALLOWED_HOSTS`](https://docs.djangoproject.com/en/5.2/ref/settings/). `host.docker.internal` is allowed with no option
+because I1's Inferno reaches the listener from a container under that name; the CLI prints each base at it.
+
+Pinned by `serve.test.ts`, "a request the listener cannot place, or whose Host it does not answer, is refused, each for
+its reason".
+
+## The world's date is moved only by a caller that is not a page on another site
+
+`POST <origin>/world-date` is a 403 when the request has an `Origin` that is not the listener's own, or a `Sec-Fetch-Site`
+other than `same-origin` or `none`. A form-encoded POST needs no preflight, so without this any page in the browser could
+move the date under a running app or test run. Browsers send `Origin` on every cross-origin POST; curl, Node and Inferno
+send neither header, so the README's `curl -d asOf=…` still works, and no token or custom header is asked for.
+
+> "Servers can use these headers — most importantly Sec-Fetch-Site — as a lightweight and reliable method to block
+> obvious cross-site requests."
+
+OWASP, [Cross-Site Request Forgery Prevention Cheat
+Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html), read
+2026-10-17, which also gives verifying `Origin` against the target's origin; [Fetch
+Metadata](https://www.w3.org/TR/fetch-metadata/) defines the header.
+
+Pinned by `serve.test.ts`, "a POST to the listener's world-date moves the world's date for the next answer, and refuses
+what is not an instant or comes from another site".
+
+## A browser app may call discovery, the token endpoint and the API from any origin
+
+`.well-known/smart-configuration`, `metadata`, the token endpoint and every FHIR API answer carry
+`Access-Control-Allow-Origin: *`; a preflight `OPTIONS` to those paths is a 204 with `Access-Control-Allow-Methods: GET, POST`
+and `Access-Control-Allow-Headers: Authorization, Content-Type, Accept`. `Access-Control-Allow-Credentials` is never sent:
+nothing uses cookies, and the API needs a bearer token. The sign-in page, the authorize endpoint and `POST /world-date` carry
+no CORS header, and `/world-date` keeps its cross-site refusal. The Host allowlist applies first, to every request. The token
+response also carries `Pragma: no-cache` beside `Cache-Control: no-store`.
+
+> "Servers that support purely browser-based apps SHALL enable Cross-Origin Resource Sharing (CORS) as follows:" ... "For
+> requests from any origin, CORS configuration permits access to the public discovery endpoints" (`.well-known/smart-configuration`
+> and `metadata`) ... "For requests from a client's registered origin(s), CORS configuration permits access to the token
+> endpoint" and to FHIR REST API endpoints.
+
+SMART App Launch, [Considerations for Cross-Origin Resource Sharing (CORS)
+support](https://hl7.org/fhir/smart-app-launch/app-launch.html), read 2026-10-17. The sandbox has no client registration, so
+every origin is a registered one: `*`. FHIR R4, [HTTP, Security](https://hl7.org/fhir/R4/http.html), read 2026-10-17: "to
+support browser-based client applications, servers SHOULD implement cross-origin resource sharing (CORS)" for the interactions
+documented there. `Pragma: no-cache` is [RFC 6749 §5.1](https://www.rfc-editor.org/rfc/rfc6749#section-5.1), which asks a
+token response for `Cache-Control: no-store` and `Pragma: no-cache`. I1's Inferno run found the missing headers
+(`epic-people/i1-inferno.md`).
+
+Pinned by `serve.test.ts`, "a browser app may read discovery, the token endpoint and the API from any origin, and the sign-in
+page and world-date from none".

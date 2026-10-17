@@ -42,4 +42,8 @@ export interface DemoHospitalOptions {
   asOf?: string;
 }
 
-export type DemoHospital = (request: Request) => Promise<Response>;
+/**
+ * Answers `request`, made of the hospital at its own FHIR base, or, given `at`, of the hospital answering at that
+ * base instead: discovery, sign-in, token and every link and `fullUrl` are then built from `at`, and `aud` must be it.
+ */
+export type DemoHospital = (request: Request, at?: string) => Promise<Response>;

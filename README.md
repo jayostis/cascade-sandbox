@@ -136,13 +136,29 @@ people's codes; `vocabulary/people/README.md` carries the hand-written ones'.
 
 ## A real address
 
-`serveDemo(hospitals)` from `@the-cascade-protocol/sandbox/node` listens on
-`127.0.0.1` at a port the system picks and resolves `{ origin, setWorldDate,
-close }`. `demoRemapFetch(origin)` is a `fetch` that sends a request for
-`https://<id>.demo.invalid/<rest>` to `<origin>/<id>/<rest>` with a `Forwarded`
-header naming the host asked, and every other request to the real `fetch`. The
-listener rebuilds the address from that header, so each hospital answers at its
-own base and every link in its records names `<id>.demo.invalid`. The sign-in
-pages are the listener's own, `<origin>/<id>/authorize`, which a browser can
-open; a request with no `Forwarded` header gets nothing else (a 404), and one
-whose host is not the path's hospital is a 400.
+`npm run serve -- [--port <n>] [--as-of <instant>] [--host <name>]...` starts
+the hospitals in a process of their own and prints `Listening at <origin>`, then
+one line per hospital and name, `hospital <id> <base> <name>`: the id and the
+base never hold a space, so split on the first two, and the rest is the
+hospital's name. The bases are `<origin>/<id>/fhir`, then the same at
+`host.docker.internal` (for a caller in a container) and at each `--host`. A
+tool outside Node (Inferno, curl, an app in another language) needs only a
+base: discovery, `metadata`, sign-in, token and search answer there, and every
+link they give names it. A request to another name for the listener is
+answered at that name if it is an IP address, `localhost`,
+`host.docker.internal` or a `--host`, and is a 403 otherwise.
+`POST <origin>/world-date` with the form field `asOf` moves the world's date
+(`asOf=` for every version); one a browser sends from another site is a 403. A
+bad argument prints the usage and exits 2; exit 1 means the listener could not
+start.
+
+In Node, `serveDemo(hospitals, { port, asOf, hosts })` from
+`@the-cascade-protocol/sandbox/node` does the same and resolves `{ origin,
+setWorldDate, close }`. `demoRemapFetch(origin)` is a `fetch` that sends a
+request for `https://<id>.demo.invalid/<rest>` to `<origin>/<id>/<rest>` with a
+`Forwarded` header naming the host asked, and every other request to the real
+`fetch`. The listener rebuilds the address from that header, so each hospital
+answers at its own base and every link in its records names
+`<id>.demo.invalid`. The remapped sign-in pages are the listener's own,
+`<origin>/<id>/authorize`, which a browser can open; a request whose
+`Forwarded` host is not the path's hospital is a 400.

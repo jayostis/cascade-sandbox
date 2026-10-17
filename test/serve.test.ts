@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { createServer, request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { demoFetch, demoRemapFetch } from "../src/index.js";
 import {
   type DemoListener,
@@ -24,6 +27,7 @@ let listener: DemoListener;
 const handed: Request[] = [];
 before(async () => {
   listener = await serveDemo(hospitals, {
+    hosts: ["sandbox.test"],
     onRequest: (request) => handed.push(request),
   });
 });
@@ -41,17 +45,21 @@ const signInAt = () =>
     code_challenge_method: "S256",
   })}`;
 
-async function signIn(fetch: typeof globalThis.fetch, patient = PATIENT) {
-  return (await signInAs({ fetch, base: BASE }, patient)).token;
+async function signIn(
+  fetch: typeof globalThis.fetch,
+  patient = PATIENT,
+  base = BASE,
+) {
+  return (await signInAs({ fetch, base }, patient)).token;
 }
 
-async function pullObservations(fetch: typeof globalThis.fetch) {
-  const token = await signIn(fetch);
+async function pullObservations(fetch: typeof globalThis.fetch, base = BASE) {
+  const token = await signIn(fetch, PATIENT, base);
   const addresses: string[] = [];
   const records: string[] = [];
   let pages = 0;
   let next: string | undefined =
-    `${BASE}/Observation?patient=${PATIENT}&_count=2`;
+    `${base}/Observation?patient=${PATIENT}&_count=2`;
   while (next !== undefined) {
     const bundle = await (
       await fetch(next, {
@@ -83,24 +91,81 @@ test("a pull through the remap names the address the client asked and returns wh
     assert.ok(address.startsWith(`${BASE}/`), address);
 });
 
-test("a request with no Forwarded header gets the sign-in page and nothing else", async () => {
-  const signIn = signInAt();
-  assert.equal((await fetch(signIn)).status, 200);
-  assert.equal(
-    (await fetch(`${listener.origin}/cascade-north/fhir/metadata`)).status,
-    404,
+test("a caller with only the listener's address discovers, signs in, searches and pages, every link at the listener", async () => {
+  const direct = `${listener.origin}/cascade-north/fhir`;
+  const found = await (
+    await fetch(`${direct}/.well-known/smart-configuration`)
+  ).json();
+  assert.equal(found.issuer, direct);
+  const { security, resource } = (
+    await (await fetch(`${direct}/metadata`)).json()
+  ).rest[0];
+  for (const each of resource.filter(
+    (one: { interaction: { code: string }[] }) =>
+      one.interaction.some(({ code }) => code === "search-type"),
+  ))
+    assert.ok(
+      each.searchParam.some(
+        (param: { name: string }) => param.name === "patient",
+      ),
+      each.type,
+    );
+  const uris = Object.fromEntries(
+    security.extension[0].extension.map(
+      (each: { url: string; valueUri: string }) => [each.url, each.valueUri],
+    ),
   );
+  assert.deepEqual(uris, {
+    authorize: found.authorization_endpoint,
+    token: found.token_endpoint,
+  });
+  for (const endpoint of Object.values(uris))
+    assert.ok(String(endpoint).startsWith(`${direct}/`), String(endpoint));
+
+  const pulled = await pullObservations(fetch, direct);
+  const remapped = await pullObservations(demoRemapFetch(listener.origin));
+  assert.ok(pulled.pages > 1, "the search pages, so next was followed");
+  assert.deepEqual(pulled.records, remapped.records);
+  for (const address of pulled.addresses)
+    assert.ok(address.startsWith(`${direct}/`), address);
+});
+
+test("a direct sign-in takes the base it came to as aud, and refuses the hospital's own", async () => {
+  const direct = `${listener.origin}/cascade-north/fhir`;
+  const rows: [string, string, number, string | null][] = [
+    ["the listener's base", direct, 200, null],
+    ["the hospital's own base", BASE, 302, "invalid_request"],
+  ];
+  for (const [why, aud, status, error] of rows) {
+    const asked = new URL(`${direct}/authorize`);
+    asked.search = new URL(signInAt()).search;
+    asked.searchParams.set("aud", aud);
+    const answer = await fetch(asked, { redirect: "manual" });
+    assert.equal(answer.status, status, why);
+    const location = answer.headers.get("Location");
+    assert.equal(
+      location && new URL(location).searchParams.get("error"),
+      error,
+      why,
+    );
+  }
 });
 
 /** A request with the target exactly as given, which `fetch` would not send as it is. */
-function rawStatus(target: string, headers: Record<string, string>) {
+function raw(target: string, headers: Record<string, string>) {
   const { port } = new URL(listener.origin);
-  return new Promise<number>((resolve, reject) =>
+  return new Promise<{ status: number; body: string }>((resolve, reject) =>
     httpRequest(
       { host: "127.0.0.1", port, path: target, headers },
       (response) => {
-        response.resume();
-        resolve(response.statusCode!);
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("end", () =>
+          resolve({
+            status: response.statusCode!,
+            body: Buffer.concat(chunks).toString(),
+          }),
+        );
       },
     )
       .on("error", reject)
@@ -108,12 +173,95 @@ function rawStatus(target: string, headers: Record<string, string>) {
   );
 }
 
-test("a request the listener cannot place is refused, each for its reason", async () => {
+async function rawStatus(target: string, headers: Record<string, string>) {
+  return (await raw(target, headers)).status;
+}
+
+test("a direct caller gets the hospital at the host it asked", async () => {
+  const { port } = new URL(listener.origin);
+  const { body } = await raw(
+    "/cascade-north/fhir/.well-known/smart-configuration",
+    { Host: `localhost:${port}` },
+  );
+  assert.equal(
+    JSON.parse(body).issuer,
+    `http://localhost:${port}/cascade-north/fhir`,
+  );
+});
+
+test("a browser app may read discovery, the token endpoint and the API from any origin, and the sign-in page and world-date from none", async () => {
+  const base = `${listener.origin}/cascade-north`;
+  const rows: [string, string, string, number, boolean][] = [
+    ["GET", `${base}/fhir/.well-known/smart-configuration`, "", 200, true],
+    ["GET", `${base}/fhir/metadata`, "", 200, true],
+    ["POST", `${base}/fhir/token`, "grant_type=nothing", 400, true],
+    ["GET", `${base}/fhir/Patient`, "", 401, true],
+    ["OPTIONS", `${base}/fhir/token`, "", 204, true],
+    ["OPTIONS", `${base}/fhir/Patient`, "", 204, true],
+    ["OPTIONS", `${base}/fhir/metadata`, "", 204, true],
+    ["GET", `${base}/authorize`, "", 400, false],
+    ["OPTIONS", `${base}/authorize`, "", 404, false],
+    ["POST", `${listener.origin}/world-date`, "asOf=", 200, false],
+    ["OPTIONS", `${listener.origin}/world-date`, "", 405, false],
+  ];
+  for (const [method, url, body, status, cors] of rows) {
+    const response = await fetch(url, {
+      method,
+      body: body === "" ? undefined : body,
+      headers:
+        body === ""
+          ? {}
+          : { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    const why = `${method} ${url}`;
+    assert.equal(response.status, status, why);
+    const header = (name: string) => response.headers.get(name);
+    assert.equal(header("Access-Control-Allow-Origin"), cors ? "*" : null, why);
+    assert.equal(header("Access-Control-Allow-Credentials"), null, why);
+    if (cors && method === "OPTIONS") {
+      assert.equal(header("Access-Control-Allow-Methods"), "GET, POST", why);
+      assert.equal(
+        header("Access-Control-Allow-Headers"),
+        "Authorization, Content-Type, Accept",
+        why,
+      );
+    }
+    if (url.endsWith("/token") && method === "POST") {
+      assert.equal(header("Cache-Control"), "no-store", why);
+      assert.equal(header("Pragma"), "no-cache", why);
+    }
+  }
+});
+
+test("a request the listener cannot place, or whose Host it does not answer, is refused, each for its reason", async () => {
   const forwarded = (host: string, proto = "https") => ({
     Forwarded: `host=${host};proto=${proto}`,
   });
   const north = "cascade-north.demo.invalid";
+  const { port } = new URL(listener.origin);
+  const metadata = "/cascade-north/fhir/metadata";
   const rows: [string, string, Record<string, string>, number][] = [
+    [
+      "a rebinding name, direct",
+      metadata,
+      { Host: `rebind.example:${port}` },
+      403,
+    ],
+    [
+      "a rebinding name, with Forwarded",
+      metadata,
+      { Host: `rebind.example:${port}`, ...forwarded(north) },
+      403,
+    ],
+    ["localhost", metadata, { Host: `localhost:${port}` }, 200],
+    [
+      "host.docker.internal",
+      metadata,
+      { Host: `host.docker.internal:${port}` },
+      200,
+    ],
+    ["a name given as a host", metadata, { Host: `sandbox.test:${port}` }, 200],
+    ["an IPv6 literal", metadata, { Host: `[::1]:${port}` }, 200],
     [
       "host not the path's hospital",
       "/cascade-north/fhir/metadata",
@@ -159,6 +307,12 @@ test("a request the listener cannot place is refused, each for its reason", asyn
       404,
     ],
     ["no id and no header", "/", {}, 404],
+    [
+      "no Forwarded, and a Host that is not a host",
+      "/cascade-north/fhir/metadata",
+      { Host: "a/b" },
+      400,
+    ],
     [
       "host with the https port is the same host",
       "/cascade-north/fhir/.well-known/smart-configuration",
@@ -244,18 +398,88 @@ test("a token stays valid across a change of the world's date, and answers as of
   assert.equal(await count(), all);
 });
 
-test("moving the world's date changes the next answer", async () => {
+test("a POST to the listener's world-date moves the world's date for the next answer, and refuses what is not an instant or comes from another site", async () => {
   const signIn = signInAt();
-  const now = await (await fetch(signIn)).text();
-  assert.doesNotMatch(now, /Records as they stood on/);
-  listener.setWorldDate("2000-01-01T00:00:00Z");
-  try {
-    assert.match(
+  const move = (asOf?: string, headers: Record<string, string> = {}) =>
+    fetch(`${listener.origin}/world-date`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams(asOf === undefined ? {} : { asOf }),
+    });
+  const asOfLine = async () =>
+    /Records as they stood on <time datetime="([^"]+)"/.exec(
       await (await fetch(signIn)).text(),
-      /Records as they stood on/,
+    )?.[1];
+  assert.equal(await asOfLine(), undefined);
+  try {
+    assert.equal((await move("2000-01-01T00:00:00Z")).status, 200);
+    assert.equal(await asOfLine(), "2000-01-01T00:00:00Z");
+    const later = "2020-01-01T00:00:00Z";
+    for (const [why, asOf, headers, status] of [
+      ["not an instant", "yesterday", {}, 400],
+      ["no asOf", undefined, {}, 400],
+      ["another Origin", later, { Origin: "https://elsewhere.example" }, 403],
+      ["a cross-site fetch", later, { "Sec-Fetch-Site": "cross-site" }, 403],
+    ] as const)
+      assert.equal((await move(asOf, headers)).status, status, why);
+    assert.equal(
+      await asOfLine(),
+      "2000-01-01T00:00:00Z",
+      "a refused move leaves the date",
     );
+    assert.equal((await move("")).status, 200);
+    assert.equal(await asOfLine(), undefined);
   } finally {
     listener.setWorldDate(undefined);
+  }
+});
+
+const SERVE_CLI = fileURLToPath(
+  new URL("../src/node/serve-cli.js", import.meta.url),
+);
+
+test("npm run serve prints each hospital's base by id, at the listener and at host.docker.internal", async () => {
+  const cli = spawn(process.execPath, [SERVE_CLI], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  try {
+    let printed = "";
+    for await (const chunk of cli.stdout) {
+      printed += String(chunk);
+      if (printed.includes("world-date")) break;
+    }
+    const origin = /^Listening at (\S+)$/m.exec(printed)?.[1];
+    assert.ok(origin, printed);
+    const bases = [...printed.matchAll(/^hospital cascade-north (\S+) /gm)].map(
+      ([, base]) => base,
+    );
+    const { port } = new URL(origin);
+    assert.deepEqual(bases, [
+      `${origin}/cascade-north/fhir`,
+      `http://host.docker.internal:${port}/cascade-north/fhir`,
+    ]);
+    const found = await (
+      await fetch(`${bases[0]}/.well-known/smart-configuration`)
+    ).json();
+    assert.equal(found.issuer, bases[0]);
+  } finally {
+    cli.kill();
+  }
+});
+
+test("npm run serve given a bad argument prints the usage and exits 2", async () => {
+  for (const args of [
+    ["--port", "x"],
+    ["--as-of", "yesterday"],
+  ]) {
+    const cli = spawn(process.execPath, [SERVE_CLI, ...args], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const closed = once(cli, "close");
+    let said = "";
+    for await (const chunk of cli.stderr) said += String(chunk);
+    assert.equal((await closed)[0], 2, args.join(" "));
+    assert.match(said, /^usage: npm run serve/, args.join(" "));
   }
 });
 

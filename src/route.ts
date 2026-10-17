@@ -43,16 +43,37 @@ export function isDemoRequest(
   );
 }
 
-/** The hospital a demo request is for: the host's first label, or the folder under `authorizeBase`. */
-function hospitalOf(url: URL, options: RouteOptions): string | undefined {
-  if (url.hostname.endsWith(DEMO_HOSTS))
-    return url.hostname.slice(0, -DEMO_HOSTS.length) || undefined;
+export interface RouterOptions extends RouteOptions {
+  /**
+   * Also answer a request on any other origin whose path starts `/<id>/`, as hospital `<id>` at the base
+   * `<origin>/<id><path>`, where `<path>` is its FHIR base's path: a listener's direct callers.
+   */
+  readonly direct?: boolean;
+}
+
+/**
+ * The hospital a demo request is for: the host's first label, the folder under `authorizeBase`, or, for a direct
+ * request, the path's first segment.
+ */
+function hospitalOf(
+  url: URL,
+  options: RouterOptions,
+): { id: string; direct: boolean } | undefined {
+  if (url.hostname.endsWith(DEMO_HOSTS)) {
+    const id = url.hostname.slice(0, -DEMO_HOSTS.length);
+    return id ? { id, direct: false } : undefined;
+  }
   const { authorizeBase } = options;
-  if (authorizeBase === undefined) return undefined;
-  const [id, page, ...rest] = address(url)
-    .slice(authorizeBase.length)
-    .split("/");
-  return id && page === "authorize" && rest.length === 0 ? id : undefined;
+  if (authorizeBase !== undefined && address(url).startsWith(authorizeBase)) {
+    const [id, page, ...rest] = address(url)
+      .slice(authorizeBase.length)
+      .split("/");
+    if (id && page === "authorize" && rest.length === 0)
+      return { id, direct: false };
+  }
+  if (!options.direct) return undefined;
+  const id = url.pathname.split("/")[1];
+  return id ? { id, direct: true } : undefined;
 }
 
 function notFound(what: string): Response {
@@ -87,21 +108,28 @@ function exposed(response: Response): Response {
  */
 export function demoRouter(
   load: LoadHospital,
-  options: RouteOptions = {},
+  options: RouterOptions = {},
 ): (request: Request) => Promise<Response> {
-  const hospitals = new Map<string, Promise<DemoHospital | undefined>>();
-  const hospital = (id: string): Promise<DemoHospital | undefined> => {
+  interface Held {
+    readonly answer: DemoHospital;
+    /** The path of the hospital's FHIR base, as `/fhir`. */
+    readonly path: string;
+  }
+  const hospitals = new Map<string, Promise<Held | undefined>>();
+  const hospital = (id: string): Promise<Held | undefined> => {
     let found = hospitals.get(id);
     if (found === undefined) {
       found = load(id).then(
         (loaded) =>
-          loaded &&
-          demoHospital({
-            ...loaded,
-            ...(options.authorizeBase === undefined
-              ? {}
-              : { authorizeUrl: `${options.authorizeBase}${id}/authorize` }),
-          }),
+          loaded && {
+            answer: demoHospital({
+              ...loaded,
+              ...(options.authorizeBase === undefined
+                ? {}
+                : { authorizeUrl: `${options.authorizeBase}${id}/authorize` }),
+            }),
+            path: new URL(loaded.hospital.fhirBase).pathname.replace(/\/$/, ""),
+          },
       );
       hospitals.set(id, found);
       found.catch(() => hospitals.delete(id));
@@ -109,13 +137,17 @@ export function demoRouter(
     return found;
   };
   return async (request) => {
-    const id = hospitalOf(new URL(request.url), options);
-    const answer = id === undefined ? undefined : await hospital(id);
-    if (answer === undefined)
-      return notFound(
-        `There is no demo hospital at ${address(new URL(request.url))}.`,
-      );
-    return exposed(await answer(request));
+    const url = new URL(request.url);
+    const of = hospitalOf(url, options);
+    const held = of === undefined ? undefined : await hospital(of.id);
+    if (of === undefined || held === undefined)
+      return notFound(`There is no demo hospital at ${address(url)}.`);
+    return exposed(
+      await held.answer(
+        request,
+        of.direct ? `${url.origin}/${of.id}${held.path}` : undefined,
+      ),
+    );
   };
 }
 
