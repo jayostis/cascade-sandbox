@@ -190,11 +190,13 @@ export function versionsUpTo(
 
 /**
  * Each patient's records, by patient id, from a hospital's patient files: each file checked by `versionsOf`, its
- * `fullUrl`s against the hospital's FHIR base, the Patient it holds against its name, and no record in two files.
+ * `fullUrl`s against the hospital's FHIR base, the Patient it holds against its name, and no record in two files. A
+ * refusal names the patient's file as `places` gives it, else `patient <id>`.
  */
 export function patientRecords(
   fhirBase: string,
   patients: Record<string, Bundle>,
+  places: Readonly<Record<string, string>> = {},
 ): Map<string, ReadonlyMap<string, readonly RecordVersion[]>> {
   const base = fhirBase.replace(/\/$/, "");
   const owners = new Set<string>();
@@ -203,7 +205,7 @@ export function patientRecords(
     ReadonlyMap<string, readonly RecordVersion[]>
   >();
   for (const [id, bundle] of Object.entries(patients)) {
-    const where = `patients/${id}.json`;
+    const where = places[id] ?? `patient ${id}`;
     const records = versionsOf(bundle, where);
     for (const { fullUrl, resource, request } of bundle.entry ?? []) {
       if (fullUrl === undefined) continue;

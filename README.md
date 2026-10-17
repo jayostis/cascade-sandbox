@@ -98,7 +98,14 @@ vocabulary/people/       the hand-written people, the vocabulary's, in the same 
 A hospital's patients are every person with a `sources/<its id>/fhir.json`,
 under the Patient id there. Every load checks each source's Patient against its
 `person.json` on name, birth date and gender, and refuses a disagreement the
-person does not declare.
+person does not declare. A declared difference must show where this loader can
+see it: at a source that is a `fhir.json` alone. A difference declared at a
+source that also holds C-CDA documents (`ccda/<day>.xml`), or at a kit
+person's download, is the vocabulary's test to check, since it reads both, and
+loads here. A difference at a source the person has no folder for, and no kit,
+is refused. A source folder holds `fhir.json`, `ccda/<day>.xml` or both, by
+those names exactly on every system; anything else in it is refused, and so is
+a source folder holding neither.
 
 Every name and record is synthetic, and comes in three kinds.
 

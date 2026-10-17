@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { historyEntry, recordsAt } from "../history.js";
 import type { Bundle, Hospital, Resource } from "../index.js";
-import type { Person } from "./people.js";
+import { officialName, type Person } from "./people.js";
 
 /** Who is chosen from the run, as `synthea/people.json` lists them. */
 export interface Chosen {
@@ -25,17 +25,12 @@ export function generatedPerson(chosen: Chosen, first: Bundle): Person {
   const patient = recordsAt(first).find(
     ({ resourceType }) => resourceType === "Patient",
   );
-  const names = (patient?.name ?? []) as {
-    use?: string;
-    family: string;
-    given: string[];
-  }[];
-  const name = names.find(({ use }) => use === "official") ?? names[0];
+  const name = patient && officialName(patient);
   if (!patient || !name)
     throw new Error(`${chosen.person} has no named Patient`);
   return {
     id: chosen.person,
-    name: { family: name.family, given: name.given },
+    name,
     birthDate: patient.birthDate as string,
     gender: patient.gender as Person["gender"],
     generated: {
