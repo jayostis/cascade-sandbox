@@ -226,6 +226,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
           `<input type="hidden" name="${name}" value="${escape(parameters.get(name) ?? "")}">`,
       )
       .join("\n      ");
+    const hint = nameWords(parameters.get("login_hint") ?? "");
     const choices = [...patients.keys()]
       .map((id) => ({ id, ...namesOf(personOf(id), id) }))
       .sort(
@@ -234,8 +235,8 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
           first.given.localeCompare(second.given),
       )
       .map(
-        ({ id, family, given }, index) =>
-          `<label class="choice"><input type="radio" name="patient" value="${escape(id)}"${index === 0 ? " checked" : ""}> ${escape([family, given].filter(Boolean).join(", "))}</label>`,
+        ({ id, family, given }) =>
+          `<label class="choice"><input type="radio" name="patient" value="${escape(id)}" required${hint !== "" && nameWords(`${given} ${family}`) === hint ? " checked" : ""}> ${escape([family, given].filter(Boolean).join(", "))}</label>`,
       )
       .join("\n        ");
     const scopes = (parameters.get("scope") ?? "")
@@ -272,7 +273,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
         }
         <div class="actions">
           <button type="submit" name="decision" value="allow" class="allow">Allow</button>
-          <button type="submit" name="decision" value="cancel">Cancel</button>
+          <button type="submit" name="decision" value="cancel" formnovalidate>Cancel</button>
         </div>
       </form>`,
     );
@@ -606,6 +607,21 @@ function token(text: string): { system?: string; code: string } {
   return bar === -1
     ? { code: text }
     : { system: text.slice(0, bar), code: text.slice(bar + 1) };
+}
+
+/**
+ * A name's words, lower-cased, without accents and in alphabetical order, so a pod's name (`rowan-ellery-marsh`) and
+ * a patient's (`Marsh`, `Rowan Ellery`) are the same whichever way round they are written.
+ */
+function nameWords(name: string): string {
+  return name
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
 }
 
 function namesOf(
