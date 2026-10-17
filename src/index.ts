@@ -846,4 +846,5 @@ export {
   versionsOf,
 } from "./history.js";
 export * from "./route.js";
+export { demoRemapFetch } from "./remap.js";
 export { brandsBundle } from "./brands.js";
