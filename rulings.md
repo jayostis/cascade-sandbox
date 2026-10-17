@@ -162,10 +162,16 @@ signed into the code and from the code into the token, so the hospital keeps no 
 
 smart-launcher-v2, `backend/routes/auth/token.ts` (`finish`), read 2026-10-17. The launcher raises `token_invalid_scope`
 only on its backend-services grant, 401 `invalid_scope`, `launchOptions.auth_error === "token_invalid_scope"`; it ignores
-it on the code exchange, which this hospital does not copy, because it has no other grant. The two `request_*` names set
-`sim_error` on the token, which `backend/lib.ts` answers on every FHIR request as `HttpError(sim_error).status(401)`.
+it on the code exchange, which this hospital does not copy, because it has no other grant. On the code exchange the two
+`request_*` names only put `sim_error` ("Invalid token", "Token expired") on the token response, and the launcher still
+serves that token (`token.ts` `finish`; `backend/lib.ts` checks `sim_error` only on the token's own claims, which only
+its backend-services grant sets).
 
-Two things are ours: the 401 carries `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750 section 3), with
+This hospital diverges, and the failure on every FHIR request is our own choice: it fails each request made with the
+token, as the launcher does for a backend-services token (`HttpError(sim_error).status(401)`), and it also puts the same
+`sim_error` on the token response, so a client written against the launcher sees it.
+
+Also ours: the 401 carries `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750 section 3), with
 `error_description="The access token expired"` for the expired switch, so a client can tell the two apart without
 reading prose; and the body is an OperationOutcome, as every FHIR error here is, not the launcher's plain text.
 

@@ -225,8 +225,8 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
         </ul>`
         }
         <details${chosen === undefined ? "" : " open"}>
-          <summary>Simulate a failure</summary>
-          <select name="simulate_error" aria-label="Simulate a failure">
+          <summary><label for="simulate_error">For app developers: simulate a failure</label></summary>
+          <select id="simulate_error" name="simulate_error">
             <option value="">None: sign in normally</option>
             ${failures}
           </select>
@@ -293,6 +293,8 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       expires_in: TOKEN_LIFETIME,
       scope,
       patient: note.patient,
+      ...(fail === "request_invalid_token" && { sim_error: "Invalid token" }),
+      ...(fail === "request_expired_token" && { sim_error: "Token expired" }),
     });
   }
 
