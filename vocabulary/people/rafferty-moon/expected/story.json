@@ -1,0 +1,20 @@
+{
+  "hospital": "cascade-north",
+  "story": "Too little data",
+  "findings": [
+    {
+      "kind": "after start",
+      "medication": "979492",
+      "test": "2823-3",
+      "date": "2024-05-06",
+      "direction": "not enough results",
+      "unit": "mmol/L",
+      "before": [
+        { "date": "2023-11-06", "value": 4.3 },
+        { "date": "2024-02-05", "value": 4.4 },
+        { "date": "2024-04-29", "value": 4.2 }
+      ],
+      "after": [{ "date": "2024-09-09", "value": 4.9 }]
+    }
+  ]
+}

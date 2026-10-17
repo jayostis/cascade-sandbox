@@ -1,0 +1,24 @@
+{
+  "id": "eliseo-pedro-krajcik",
+  "name": {
+    "family": "Krajcik",
+    "given": [
+      "Eliseo",
+      "Pedro"
+    ]
+  },
+  "birthDate": "1960-07-13",
+  "gender": "male",
+  "generated": {
+    "by": "synthea 4.0.0",
+    "syntheaId": "e83719b7-d3c2-1460-48b5-f91656bdff61",
+    "seed": 90,
+    "clinicianSeed": 90,
+    "referenceDate": "2026-10-01",
+    "endDate": "2026-10-01",
+    "arguments": "-p 40 -a 45-80 Washington",
+    "hospitals": [
+      "cascade-north"
+    ]
+  }
+}

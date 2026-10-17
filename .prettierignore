@@ -1,4 +1,5 @@
 build/
 dist/
 package-lock.json
-data/*/patients/syn-*.json
+people/*/
+vocabulary/

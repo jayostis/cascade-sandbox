@@ -1,13 +1,90 @@
 import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { type Resource, recordsAt, versionsOf } from "../src/index.js";
-import { loadHospital } from "../src/node/index.js";
-import { OBSERVATION_CATEGORIES } from "../src/node/synthea.js";
+import {
+  DEFAULT_ROOTS,
+  loadHospital,
+  loadHospitals,
+  loadPeople,
+} from "../src/node/index.js";
+import {
+  type Chosen,
+  generatedPerson,
+  OBSERVATION_CATEGORIES,
+} from "../src/node/synthea.js";
 
 const PACKAGE = new URL("../../", import.meta.url);
 const FOLDERS = ["cascade-north", "cascade-south"];
+const PEOPLE = await loadPeople(DEFAULT_ROOTS.people);
+
+test("the hospitals serve the people the package holds: each patient at each hospital, with as many records as when each hospital held its own patients", async () => {
+  const served = Object.fromEntries(
+    (await loadHospitals()).map(({ hospital, patients }) => [
+      new URL(hospital.fhirBase).hostname.split(".")[0],
+      Object.fromEntries(
+        Object.entries(patients)
+          .map(([id, bundle]) => [id, versionsOf(bundle, id).size] as const)
+          .sort(([one], [other]) => one.localeCompare(other)),
+      ),
+    ]),
+  );
+  assert.deepEqual(served, {
+    "cascade-north": {
+      "pt-1001": 17,
+      "pt-1002": 10,
+      "story-red-herring": 16,
+      "story-side-effect": 8,
+      "story-statin": 9,
+      "story-stopped": 8,
+      "story-too-little": 6,
+      "syn-c521b4f4b8f5b303": 647,
+      "syn-eb3d267fcb803202": 653,
+    },
+    "cascade-south": {
+      "s-48213": 10,
+      "syn-0c7c8edf48f450e1": 504,
+      "syn-25b2cdfcaf0b380e": 620,
+    },
+  });
+});
+
+test("Rowan Ellery Marsh is one person at two hospitals, under each hospital's own patient id", async () => {
+  const rowan = PEOPLE.find(({ person }) => person.id === "rowan-ellery-marsh");
+  assert.deepEqual(Object.keys(rowan?.sources ?? {}), [
+    "cascade-north",
+    "cascade-south",
+  ]);
+  const [north, south] = await Promise.all(
+    FOLDERS.map((id) => loadHospital(id)),
+  );
+  assert.ok(north && "pt-1001" in north.patients);
+  assert.ok(south && "s-48213" in south.patients);
+  assert.deepEqual(north.patients["pt-1001"], rowan!.sources["cascade-north"]);
+});
+
+test("each generated person is what npm run synthea writes of their first hospital's Patient", async () => {
+  const chosen = JSON.parse(
+    await readFile(new URL("synthea/people.json", PACKAGE), "utf8"),
+  ) as Chosen[];
+  for (const one of chosen) {
+    const loaded = PEOPLE.find(({ person }) => person.id === one.person);
+    assert.ok(loaded, one.person);
+    assert.deepEqual(Object.keys(loaded.sources), one.hospitals, one.person);
+    assert.deepEqual(
+      loaded.person,
+      generatedPerson(one, loaded.sources[one.hospitals[0]!]!),
+      one.person,
+    );
+  }
+  assert.deepEqual(
+    PEOPLE.filter(({ person }) => person.generated).map(
+      ({ person }) => person.id,
+    ),
+    chosen.map(({ person }) => person).sort(),
+  );
+});
 const removed = JSON.parse(
   await readFile(new URL("synthea/removed.json", PACKAGE), "utf8"),
 ) as Record<string, string[]>;
@@ -41,16 +118,17 @@ const PROVIDER_FIELDS = ["serviceProvider", "location", "performer"];
 test("every patient file keeps the hospitals' data rules", async () => {
   const idsAt = new Map<string, Set<string>>();
   const people = new Map<string, string[]>();
+  for (const { folder, sources } of PEOPLE)
+    for (const source of Object.keys(sources)) {
+      const file = join(folder, "sources", source, "fhir.json");
+      assert.ok((await stat(file)).size <= 2 * 1024 * 1024, file);
+    }
   for (const folder of FOLDERS) {
     const { hospital, patients } = await loadHospital(folder);
     const ids = new Set<string>();
     idsAt.set(folder, ids);
     for (const [patient, bundle] of Object.entries(patients)) {
       const where = `${folder}/${patient}`;
-      const file = fileURLToPath(
-        new URL(`data/${folder}/patients/${patient}.json`, PACKAGE),
-      );
-      assert.ok((await stat(file)).size <= 2 * 1024 * 1024, where);
       const versions = versionsOf(bundle, where);
       const names = new Set(versions.keys());
       for (const key of names) {

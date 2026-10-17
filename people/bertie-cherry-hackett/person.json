@@ -1,0 +1,24 @@
+{
+  "id": "bertie-cherry-hackett",
+  "name": {
+    "family": "Hackett",
+    "given": [
+      "Bertie",
+      "Cherry"
+    ]
+  },
+  "birthDate": "1955-11-15",
+  "gender": "female",
+  "generated": {
+    "by": "synthea 4.0.0",
+    "syntheaId": "6ef86d46-93b8-46b0-4c20-c04e76e5a221",
+    "seed": 90,
+    "clinicianSeed": 90,
+    "referenceDate": "2026-10-01",
+    "endDate": "2026-10-01",
+    "arguments": "-p 40 -a 45-80 Washington",
+    "hospitals": [
+      "cascade-south"
+    ]
+  }
+}

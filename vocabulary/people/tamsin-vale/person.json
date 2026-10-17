@@ -1,0 +1,12 @@
+{
+  "id": "tamsin-vale",
+  "name": { "family": "Vale", "given": ["Tamsin"] },
+  "birthDate": "1957-09-30",
+  "gender": "female",
+  "subject": {
+    "iri": "urn:uuid:27731b6d-0635-4974-af7b-17a5c2a17153",
+    "name": "Tamsin",
+    "storage": "https://pod.tamsin-vale.example/"
+  },
+  "kit": "conformance/tamsin-vale"
+}

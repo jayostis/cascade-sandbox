@@ -1,0 +1,12 @@
+{
+  "id": "priya-natarajan",
+  "name": { "family": "Natarajan", "given": ["Priya"] },
+  "birthDate": "1968-11-04",
+  "gender": "female",
+  "subject": {
+    "iri": "urn:uuid:1df86788-b7f6-4417-87bc-5e36cd211759",
+    "name": "Priya",
+    "storage": "https://pod.priya-natarajan.example/"
+  },
+  "kit": "conformance/priya-natarajan"
+}

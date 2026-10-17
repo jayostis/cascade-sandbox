@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
 import {
   type DemoHospital,
@@ -351,7 +348,7 @@ test("the sign-in page preselects the patient its login_hint names, in either or
     "Marsh, Rowan Ellery",
   ]);
   assert.deepEqual(await preselected("Fenn Tobias"), ["Fenn, Tobias"]);
-  for (const hint of [undefined, "", "tamsin-at-north", "rowan-marsh"])
+  for (const hint of [undefined, "", "hedda-at-north", "rowan-marsh"])
     assert.deepEqual(await preselected(hint), [], String(hint));
 });
 
@@ -645,21 +642,6 @@ test("each bad request is refused as the protocol says", async () => {
   await assert.rejects(
     get(keyless, `${NORTH}/Condition?patient=${A_NORTH}`, token),
   );
-});
-
-test("a patient file must hold the patient it is named for", async (t) => {
-  const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
-  t.after(() => rm(folder, { recursive: true, force: true }));
-  await mkdir(join(folder, "patients"));
-  await writeFile(
-    join(folder, "hospital.json"),
-    JSON.stringify(north.hospital),
-  );
-  await writeFile(
-    join(folder, "patients", "rowan.json"),
-    JSON.stringify(north.patients[A_NORTH]),
-  );
-  await assert.rejects(loadHospital(folder), /rowan/);
 });
 
 test("each error switch fails at its own step, as smart-launcher-v2 does, and an unknown one is refused", async () => {

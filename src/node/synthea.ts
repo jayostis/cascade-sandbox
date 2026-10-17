@@ -1,6 +1,50 @@
 import { createHash } from "node:crypto";
-import { historyEntry } from "../history.js";
+import { historyEntry, recordsAt } from "../history.js";
 import type { Bundle, Hospital, Resource } from "../index.js";
+import { officialName, type Person } from "./people.js";
+
+/** Who is chosen from the run, as `synthea/people.json` lists them. */
+export interface Chosen {
+  person: string;
+  synthea: string;
+  hospitals: string[];
+}
+
+/** The run `synthea/README.md` gives, as a generated person records it. */
+export const RUN = {
+  by: "synthea 4.0.0",
+  seed: 90,
+  clinicianSeed: 90,
+  referenceDate: "2026-10-01",
+  endDate: "2026-10-01",
+  arguments: "-p 40 -a 45-80 Washington",
+};
+
+/** A generated person's `person.json`, from the Patient of their first hospital's file. */
+export function generatedPerson(chosen: Chosen, first: Bundle): Person {
+  const patient = recordsAt(first).find(
+    ({ resourceType }) => resourceType === "Patient",
+  );
+  const name = patient && officialName(patient);
+  if (!patient || !name)
+    throw new Error(`${chosen.person} has no named Patient`);
+  return {
+    id: chosen.person,
+    name,
+    birthDate: patient.birthDate as string,
+    gender: patient.gender as Person["gender"],
+    generated: {
+      by: RUN.by,
+      syntheaId: chosen.synthea,
+      seed: RUN.seed,
+      clinicianSeed: RUN.clinicianSeed,
+      referenceDate: RUN.referenceDate,
+      endDate: RUN.endDate,
+      arguments: RUN.arguments,
+      hospitals: chosen.hospitals,
+    },
+  };
+}
 
 export const OBSERVATION_CATEGORIES = ["laboratory", "vital-signs"];
 const PROVIDER_TYPES = ["Organization", "Location"];

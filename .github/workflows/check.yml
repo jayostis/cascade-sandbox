@@ -28,3 +28,26 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+
+  people:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: pin
+        run: |
+          echo "repository=$(node -p "new URL(require('./vocabulary.json').repository).pathname.slice(1)")" >> "$GITHUB_OUTPUT"
+          echo "commit=$(node -p "require('./vocabulary.json').commit")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.pin.outputs.repository }}
+          ref: ${{ steps.pin.outputs.commit }}
+          path: cascade-vocabulary
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run people -- --check cascade-vocabulary
