@@ -108,3 +108,16 @@ Every name and record is synthetic, and comes in three kinds.
 
 [`data/NOTICE.md`](data/NOTICE.md) carries the notices for the codes in the
 data.
+
+## A real address
+
+`serve(hospitals)` from `@the-cascade-protocol/sandbox/node` listens on
+`127.0.0.1` at a port the system picks and resolves `{ origin, setWorldDate,
+close }`. `remapFetch(origin)` is a `fetch` that sends a request for
+`https://<id>.demo.invalid/<rest>` to `<origin>/<id>/<rest>` with a `Forwarded`
+header naming the host asked, and every other request to the real `fetch`. The
+listener rebuilds the address from that header, so each hospital answers at its
+own base and every link in its records names `<id>.demo.invalid`. The sign-in
+pages are the listener's own, `<origin>/<id>/authorize`, which a browser can
+open; a request with no `Forwarded` header gets nothing else (a 404), and one
+whose host is not the path's hospital is a 400.

@@ -232,3 +232,4 @@ export async function addPatient(
   await writeFile(path, `${JSON.stringify(bundle, null, 2)}\n`, { flag: "wx" });
   return path;
 }
+export * from "./serve.js";
