@@ -4,10 +4,10 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
-import { fileURLToPath, URL, URLSearchParams } from "node:url";
-import { createHash } from "node:crypto";
-import { brandsBundle, demoHospital, versionsOf } from "../dist/src/index.js";
+import { fileURLToPath, URL } from "node:url";
+import { brandsBundle, versionsOf } from "../dist/src/index.js";
 import { loadHospitals } from "../dist/src/node/index.js";
+import { signInAs } from "../dist/src/testing.js";
 
 const { Request } = globalThis;
 
@@ -23,40 +23,11 @@ const WORK = fileURLToPath(new URL("../build/validator/", import.meta.url));
 
 /** A token for `patient` at `hospital`, signed in through its own authorize and token endpoints. */
 async function tokenFor(hospital, patients, patient) {
-  const redirect = "https://app.example/callback";
-  const verifier =
-    "a-verifier-long-enough-to-be-a-real-pkce-code-verifier-0123";
-  const serve = demoHospital({ hospital, patients, autoApprove: patient });
-  const base = hospital.fhirBase;
-  const back = await serve(
-    new Request(
-      `${base}/authorize?${new URLSearchParams({
-        response_type: "code",
-        client_id: "validator",
-        redirect_uri: redirect,
-        scope: "launch/patient patient/*.rs",
-        aud: base,
-        code_challenge: createHash("sha256")
-          .update(verifier)
-          .digest("base64url"),
-        code_challenge_method: "S256",
-      })}`,
-    ),
+  const { hospital: serve, token } = await signInAs(
+    { hospital, patients },
+    patient,
   );
-  const code = new URL(back.headers.get("Location")).searchParams.get("code");
-  const answer = await serve(
-    new Request(`${base}/token`, {
-      method: "POST",
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: redirect,
-        client_id: "validator",
-        code_verifier: verifier,
-      }),
-    }),
-  );
-  return [serve, (await answer.json()).access_token];
+  return [serve, token];
 }
 
 /**

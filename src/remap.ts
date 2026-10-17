@@ -51,7 +51,12 @@ export function demoRemapFetch(
         return response;
       if (followed === MOST_REDIRECTS)
         throw new TypeError("fetch failed: too many redirects");
-      url = new URL(location, url);
+      const next = new URL(location, url);
+      if (next.origin !== url.origin) {
+        headers = new Headers(headers);
+        headers.delete("authorization");
+      }
+      url = next;
       if (
         response.status === 303 ||
         ((response.status === 301 || response.status === 302) &&

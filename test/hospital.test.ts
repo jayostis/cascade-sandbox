@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +9,7 @@ import {
   type Resource,
 } from "../src/index.js";
 import { loadHospital } from "../src/node/index.js";
+import { answerSignIn, pkcePair, signInAs } from "../src/testing.js";
 
 const north = await loadHospital("cascade-north");
 const south = await loadHospital("cascade-south");
@@ -21,8 +21,7 @@ const A_SOUTH = "s-48213";
 
 const CLIENT = "test-app";
 const REDIRECT = "https://app.example/callback";
-const VERIFIER = "a-verifier-long-enough-to-be-a-real-pkce-code-verifier-0123";
-const CHALLENGE = createHash("sha256").update(VERIFIER).digest("base64url");
+const { verifier: VERIFIER, challenge: CHALLENGE } = pkcePair();
 const START = new Date("2026-01-01T00:00:00Z");
 const after = (seconds: number) => () =>
   new Date(START.getTime() + seconds * 1000);
@@ -88,25 +87,11 @@ function tokenForm(code: string, overrides: Record<string, string> = {}) {
   };
 }
 
-async function signIn(
-  data: typeof north,
-  patient: string,
-  scope?: string,
-): Promise<{ hospital: DemoHospital; code: string; token: string }> {
-  const base = data.hospital.fhirBase;
-  const approving = demoHospital({
-    ...data,
-    autoApprove: patient,
+const signIn = (data: typeof north, patient: string, scope?: string) =>
+  signInAs(data, patient, {
     now: after(0),
+    ...(scope === undefined ? {} : { scope }),
   });
-  const code =
-    redirected(
-      await authorize(approving, base, scope === undefined ? {} : { scope }),
-    ).get("code") ?? "";
-  const hospital = demoHospital({ ...data, now: after(0) });
-  const answer = await (await exchange(hospital, base, tokenForm(code))).json();
-  return { hospital, code, token: answer.access_token };
-}
 
 function get(hospital: DemoHospital, url: string, token?: string) {
   return hospital(
@@ -331,6 +316,18 @@ test("a patient signs in through the page, which says what the app asks in words
   assert.equal(cancelled.get("error"), "access_denied");
   assert.equal(cancelled.get("state"), "s-123");
   assert.equal(cancelled.get("code"), null);
+});
+
+test("answerSignIn gives the callback URL, with a code when allowed and an error when cancelled", async () => {
+  const hospital = demoHospital(north);
+  const through = (input: RequestInfo | URL, init?: RequestInit) =>
+    hospital(new Request(input, init));
+  const url = `${NORTH}/authorize?${authorizeQuery(NORTH)}`;
+  const allowed = await answerSignIn(through, url, B_NORTH);
+  assert.ok(allowed.searchParams.get("code"));
+  const cancelled = await answerSignIn(through, url, B_NORTH, "cancel");
+  assert.equal(cancelled.searchParams.get("error"), "access_denied");
+  assert.equal(cancelled.searchParams.get("code"), null);
 });
 
 test("the sign-in page preselects the patient its login_hint names, in either order of words, and no one otherwise", async () => {

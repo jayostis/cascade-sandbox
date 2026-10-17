@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { demoFetch, demoRemapFetch } from "../src/index.js";
 import {
@@ -8,8 +8,9 @@ import {
   loadHospitals,
   serveDemo,
 } from "../src/node/index.js";
+import { send } from "../src/node/serve.js";
+import { pkcePair, signInAs } from "../src/testing.js";
 
-const VERIFIER = "a-verifier-long-enough-to-be-a-real-pkce-code-verifier-0123";
 const REDIRECT = "https://app.example/callback";
 
 const hospitals = await loadHospitals();
@@ -28,53 +29,20 @@ before(async () => {
 });
 after(() => listener.close());
 
-const authorizeQuery = () =>
-  new URLSearchParams({
+const signInAt = () =>
+  `${listener.origin}/cascade-north/authorize?${new URLSearchParams({
     response_type: "code",
     client_id: "test-app",
     redirect_uri: REDIRECT,
     scope: "launch/patient patient/*.rs",
     state: "s",
     aud: BASE,
-    code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+    code_challenge: pkcePair().challenge,
     code_challenge_method: "S256",
-  });
-const signInAt = () =>
-  `${listener.origin}/cascade-north/authorize?${authorizeQuery()}`;
+  })}`;
 
-/** Signs in as `patient` by the hospital's own discovery and sign-in page, and returns the access token. */
 async function signIn(fetch: typeof globalThis.fetch, patient = PATIENT) {
-  const discovery = await (
-    await fetch(`${BASE}/.well-known/smart-configuration`)
-  ).json();
-  const query = authorizeQuery();
-  const page = await fetch(`${discovery.authorization_endpoint}?${query}`);
-  assert.match(await page.text(), /Sign in/);
-  const approved = await fetch(discovery.authorization_endpoint, {
-    method: "POST",
-    redirect: "manual",
-    body: new URLSearchParams({
-      ...Object.fromEntries(query),
-      decision: "allow",
-      patient,
-    }),
-  });
-  const code = new URL(approved.headers.get("Location")!).searchParams.get(
-    "code",
-  )!;
-  const token = await (
-    await fetch(discovery.token_endpoint, {
-      method: "POST",
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: REDIRECT,
-        client_id: "test-app",
-        code_verifier: VERIFIER,
-      }),
-    })
-  ).json();
-  return token.access_token as string;
+  return (await signInAs({ fetch, base: BASE }, patient)).token;
 }
 
 async function pullObservations(fetch: typeof globalThis.fetch) {
@@ -288,5 +256,51 @@ test("moving the world's date changes the next answer", async () => {
     );
   } finally {
     listener.setWorldDate(undefined);
+  }
+});
+
+test("two cookies set by one response reach the client as two headers", async () => {
+  const server = createServer((_, outgoing) => {
+    const headers = new Headers({ "Content-Type": "text/plain" });
+    headers.append("Set-Cookie", "a=1; Path=/");
+    headers.append("Set-Cookie", "b=2; Path=/");
+    void send(outgoing, new Response("ok", { headers }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const answer = await fetch(`http://127.0.0.1:${port}/`);
+    assert.deepEqual(answer.headers.getSetCookie(), [
+      "a=1; Path=/",
+      "b=2; Path=/",
+    ]);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
+});
+
+test("a redirect that leaves the origin loses Authorization, and one that stays keeps it", async () => {
+  const rows: [string, string, string | null][] = [
+    ["the same origin", `${BASE}/metadata`, "Bearer t"],
+    ["another host", "https://other.example/metadata", null],
+    [
+      "the same host on another port",
+      "https://cascade-north.demo.invalid:8443/metadata",
+      null,
+    ],
+  ];
+  for (const [why, location, sent] of rows) {
+    const seen: (string | null)[] = [];
+    const fallback: typeof fetch = async (_, init) => {
+      seen.push(new Headers(init?.headers).get("Authorization"));
+      return seen.length === 1
+        ? new Response(null, { status: 302, headers: { Location: location } })
+        : new Response("ok");
+    };
+    await demoRemapFetch(listener.origin, fallback)(`${BASE}/start`, {
+      headers: { Authorization: "Bearer t" },
+    });
+    assert.deepEqual(seen, ["Bearer t", sent], why);
   }
 });

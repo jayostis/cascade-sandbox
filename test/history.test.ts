@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +13,7 @@ import {
   recordsAt,
 } from "../src/index.js";
 import { loadHospital } from "../src/node/index.js";
+import { pkcePair, signInAs } from "../src/testing.js";
 
 const { hospital } = await loadHospital("cascade-north");
 const BASE = hospital.fhirBase;
@@ -109,16 +109,16 @@ const options = (asOf?: string): DemoHospitalOptions => ({
 });
 
 const REDIRECT = "https://app.example/callback";
-const VERIFIER = "a-verifier-long-enough-to-be-a-real-pkce-code-verifier-0123";
+const { challenge } = pkcePair();
 
-const signIn = (scope = "launch/patient patient/*.rs") =>
+const signIn = () =>
   new URLSearchParams({
     response_type: "code",
     client_id: "test-app",
     redirect_uri: REDIRECT,
-    scope,
+    scope: "launch/patient patient/*.rs",
     aud: BASE,
-    code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+    code_challenge: challenge,
     code_challenge_method: "S256",
   });
 
@@ -127,25 +127,10 @@ async function tokenFor(
   scope?: string,
   asOf?: string,
 ): Promise<string> {
-  const approving = demoHospital({ ...options(asOf), autoApprove: patient });
-  const back = await approving(
-    new Request(`${BASE}/authorize?${signIn(scope)}`),
-  );
-  const code =
-    new URL(back.headers.get("Location") ?? "").searchParams.get("code") ?? "";
-  const answer = await approving(
-    new Request(`${BASE}/token`, {
-      method: "POST",
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: REDIRECT,
-        client_id: "test-app",
-        code_verifier: VERIFIER,
-      }),
-    }),
-  );
-  return (await answer.json()).access_token;
+  const { token } = await signInAs(options(asOf), patient, {
+    ...(scope === undefined ? {} : { scope }),
+  });
+  return token;
 }
 
 const token = await tokenFor("p1");
