@@ -80,7 +80,7 @@ const PATIENTS: Record<string, Bundle> = {
     version(obs("o2"), "1", "2023-02-01T00:00:00Z"),
     deletion("Observation/o1", "2", "2024-05-01T00:00:00Z"),
     version(
-      { resourceType: "Condition", id: "c1" },
+      { resourceType: "Condition", id: "c1", onsetDateTime: "2023-06-01" },
       "1",
       "2025-01-01T00:00:00Z",
     ),
@@ -444,7 +444,7 @@ test("a record made again after its deletion is written in its history as a new 
   );
 });
 
-test("a patient's export is a collection of each record's version at T, addressed as the hospital's own, and refuses a patient it lacks", () => {
+test("a patient's export is a collection of each record's version at T, addressed as the hospital's own", () => {
   const held = { hospital, patients: PATIENTS };
   const at = (asOf?: string) => {
     const collection = exportCollection(held, "p1", asOf);
@@ -470,12 +470,6 @@ test("a patient's export is a collection of each record's version at T, addresse
     [`${BASE}/Observation/o2`]: "o2",
     [`${BASE}/Condition/c1`]: "c1",
   });
-  assert.throws(
-    () => exportCollection(held, "nobody"),
-    (error: unknown) =>
-      error instanceof HospitalDataError &&
-      error.reason === `${hospital.name} has no patient nobody`,
-  );
 });
 
 test("the hospital's scopes grant what SMART says each grants", async () => {
@@ -703,5 +697,24 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
       asOf,
     );
     assert.throws(() => recordsAt(PATIENTS.p1!, asOf), refused("asOf", reason));
+    assert.throws(
+      () => exportCollection({ hospital, patients: PATIENTS }, "p1", asOf),
+      refused("asOf", reason),
+      asOf,
+    );
+  }
+
+  const exportRows: [string, string, string | undefined, string][] = [
+    ["an unknown patient", "nobody", undefined, ""],
+    ["a Patient made after T", "p3", T, ` at ${T}`],
+    ["a Patient deleted, now", "p4", undefined, ""],
+    ["a Patient deleted, at T", "p4", T, ` at ${T}`],
+  ];
+  for (const [name, patient, asOf, at] of exportRows) {
+    assert.throws(
+      () => exportCollection({ hospital, patients: PATIENTS }, patient, asOf),
+      refused("patient", `${hospital.name} has no patient ${patient}${at}`),
+      name,
+    );
   }
 });

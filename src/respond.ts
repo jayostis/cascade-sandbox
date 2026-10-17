@@ -44,7 +44,7 @@ export function notAllowed(allow: string): Response {
 
 export function outcome(
   status: number,
-  code: string,
+  code: fhir4.OperationOutcomeIssue["code"],
   diagnostics: string,
   headers: Record<string, string> = {},
 ): Response {
@@ -53,7 +53,7 @@ export function outcome(
     issue: [
       {
         severity: "error",
-        code: code as fhir4.OperationOutcome["issue"][number]["code"],
+        code,
         diagnostics,
       },
     ],
