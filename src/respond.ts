@@ -27,8 +27,18 @@ export function fhirJson(
   return json(status, { "Content-Type": FHIR_JSON, ...headers }, body);
 }
 
-export function tokenError(error: string): Response {
-  return json(400, NO_STORE, { error });
+export function tokenError(
+  error: string,
+  status = 400,
+  description?: string,
+): Response {
+  return json(
+    status,
+    NO_STORE,
+    description === undefined
+      ? { error }
+      : { error, error_description: description },
+  );
 }
 
 export function notAllowed(allow: string): Response {

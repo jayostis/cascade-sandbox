@@ -146,3 +146,28 @@ handling. `_since` is an instant, and one with no timezone is a 400 `invalid`.
 
 Pinned by `history.test.ts`, rows "a history at a year in which both versions were current", "a history at a year
 before the change", "a history at a day after the change" and "a history since a time with no timezone".
+
+## Error switches follow smart-launcher-v2
+
+`simulate_error` on the authorize request (or the sign-in page's "Simulate a failure" menu) is one of four names. It is
+signed into the code and from the code into the token, so the hospital keeps no state. An unknown name redirects with
+`error=invalid_request`; an empty one is no switch.
+
+- `token_invalid_token`: the token request answers 401 `{"error":"invalid_client"}`.
+- `token_invalid_scope`: the token request answers 401 `{"error":"invalid_scope"}`.
+- `request_invalid_token`: the token is issued, and every FHIR request with it answers 401, "Invalid token".
+- `request_expired_token`: the same, "Token expired".
+
+> `if (authorizationToken.auth_error === "token_invalid_token") { throw new InvalidClientError("Simulated invalid client error").status(401) }`
+
+smart-launcher-v2, `backend/routes/auth/token.ts` (`finish`), read 2026-10-17. The launcher raises `token_invalid_scope`
+only on its backend-services grant, 401 `invalid_scope`, `launchOptions.auth_error === "token_invalid_scope"`; it ignores
+it on the code exchange, which this hospital does not copy, because it has no other grant. The two `request_*` names set
+`sim_error` on the token, which `backend/lib.ts` answers on every FHIR request as `HttpError(sim_error).status(401)`.
+
+Two things are ours: the 401 carries `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750 section 3), with
+`error_description="The access token expired"` for the expired switch, so a client can tell the two apart without
+reading prose; and the body is an OperationOutcome, as every FHIR error here is, not the launcher's plain text.
+
+Pinned by `hospital.test.ts`, "each error switch fails at its own step, as smart-launcher-v2 does, and an unknown one is
+refused".

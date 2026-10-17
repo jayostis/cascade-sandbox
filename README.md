@@ -33,6 +33,13 @@ codes and tokens expire by) and `asOf` (the world's date, a FHIR instant such as
 `2024-02-01T00:00:00Z`: the hospital answers with its records as they stood
 then; with none, with each record's latest version).
 
+## Failing on purpose
+
+To test an app's error handling, add `simulate_error=<name>` to the authorize request, or pick "Simulate a failure" on
+the sign-in page. `token_invalid_token` and `token_invalid_scope` fail the token request (401); `request_invalid_token`
+and `request_expired_token` issue a token that every record request then refuses (401). An unknown name redirects back
+with `error=invalid_request`. The names and answers are smart-launcher-v2's; see [`rulings.md`](rulings.md).
+
 ## Versions and the world's date
 
 A patient file is a FHIR R4 Bundle of one of two types:

@@ -34,6 +34,8 @@ import {
   namesOf,
   page,
   scopeInWords,
+  SIMULATED_ERRORS,
+  simulatedError,
 } from "./signin.js";
 import type { DemoHospital, DemoHospitalOptions, Resource } from "./types.js";
 
@@ -126,6 +128,11 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     ) {
       return back({ error: "invalid_request" });
     }
+    const asked = parameters.get("simulate_error") ?? "";
+    const fail = simulatedError(asked);
+    if (asked !== "" && fail === undefined) {
+      return back({ error: "invalid_request" });
+    }
 
     let patient: string | undefined;
     if (form) {
@@ -150,6 +157,7 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
       redirect: parameters.get("redirect_uri"),
       challenge: parameters.get("code_challenge"),
       scope: parameters.get("scope") ?? "",
+      fail,
       exp: seconds() + CODE_LIFETIME,
     });
     return back({ code });
@@ -187,6 +195,13 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
           : `<li>${escape(words)}<code>${escape(scope)}</code></li>`;
       })
       .join("\n        ");
+    const chosen = simulatedError(parameters.get("simulate_error"));
+    const failures = Object.entries(SIMULATED_ERRORS)
+      .map(
+        ([name, words]) =>
+          `<option value="${name}"${name === chosen ? " selected" : ""}>${escape(words)}</option>`,
+      )
+      .join("\n            ");
     const asOfLine =
       asOf === undefined
         ? ""
@@ -209,6 +224,13 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
         ${scopes}
         </ul>`
         }
+        <details${chosen === undefined ? "" : " open"}>
+          <summary>Simulate a failure</summary>
+          <select name="simulate_error" aria-label="Simulate a failure">
+            <option value="">None: sign in normally</option>
+            ${failures}
+          </select>
+        </details>
         <div class="actions">
           <button type="submit" name="decision" value="allow" class="allow">Allow</button>
           <button type="submit" name="decision" value="cancel" formnovalidate>Cancel</button>
@@ -244,11 +266,25 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     ) {
       return tokenError("invalid_grant");
     }
+    const fail = simulatedError(
+      typeof note.fail === "string" ? note.fail : undefined,
+    );
+    if (fail === "token_invalid_token") {
+      return tokenError(
+        "invalid_client",
+        401,
+        "Simulated invalid client error",
+      );
+    }
+    if (fail === "token_invalid_scope") {
+      return tokenError("invalid_scope", 401, "Simulated invalid scope error");
+    }
     const scope = typeof note.scope === "string" ? note.scope : "";
     const accessToken = await signer.sign({
       use: "token",
       patient: note.patient,
       scope,
+      fail,
       exp: seconds() + TOKEN_LIFETIME,
     });
     return json(200, NO_STORE, {
@@ -275,6 +311,20 @@ export function demoHospital(options: DemoHospitalOptions): DemoHospital {
     ) {
       return outcome(401, "login", "A valid bearer token is required.", {
         "WWW-Authenticate": "Bearer",
+      });
+    }
+    const fail = simulatedError(
+      typeof note.fail === "string" ? note.fail : undefined,
+    );
+    if (fail === "request_invalid_token") {
+      return outcome(401, "login", "Invalid token", {
+        "WWW-Authenticate": 'Bearer error="invalid_token"',
+      });
+    }
+    if (fail === "request_expired_token") {
+      return outcome(401, "login", "Token expired", {
+        "WWW-Authenticate":
+          'Bearer error="invalid_token", error_description="The access token expired"',
       });
     }
     const patient = note.patient;
