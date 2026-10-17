@@ -10,8 +10,10 @@ import {
   demoHospital,
   HospitalDataError,
   type Resource,
+  exportCollection,
   recordsAt,
 } from "../src/index.js";
+import { historyEntry } from "../src/history.js";
 import { loadHospital } from "../src/node/index.js";
 import { pkcePair, signInAs } from "../src/testing.js";
 
@@ -23,20 +25,20 @@ function version(
   resource: Resource,
   versionId: string,
   at: string,
-  method: "POST" | "PUT" = versionId === "1" ? "POST" : "PUT",
+  method?: "POST" | "PUT",
 ): BundleEntry {
-  const record = `${resource.resourceType}/${resource.id}`;
+  const entry = historyEntry(resource, versionId, at);
+  if (method === undefined || method === entry.request?.method) return entry;
+  const created = method === "POST";
   return {
-    resource: { ...resource, meta: { versionId, lastUpdated: at } },
+    ...entry,
     request: {
       method,
-      url: method === "POST" ? resource.resourceType : record,
+      url: created
+        ? resource.resourceType
+        : `${resource.resourceType}/${resource.id}`,
     },
-    response: {
-      status: method === "POST" ? "201" : "200",
-      lastModified: at,
-      etag: `W/"${versionId}"`,
-    },
+    response: { ...entry.response!, status: created ? "201" : "200" },
   };
 }
 
@@ -78,7 +80,7 @@ const PATIENTS: Record<string, Bundle> = {
     version(obs("o2"), "1", "2023-02-01T00:00:00Z"),
     deletion("Observation/o1", "2", "2024-05-01T00:00:00Z"),
     version(
-      { resourceType: "Condition", id: "c1" },
+      { resourceType: "Condition", id: "c1", onsetDateTime: "2023-06-01" },
       "1",
       "2025-01-01T00:00:00Z",
     ),
@@ -442,6 +444,34 @@ test("a record made again after its deletion is written in its history as a new 
   );
 });
 
+test("a patient's export is a collection of each record's version at T, addressed as the hospital's own", () => {
+  const held = { hospital, patients: PATIENTS };
+  const at = (asOf?: string) => {
+    const collection = exportCollection(held, "p1", asOf);
+    assert.equal(collection.type, "collection");
+    return Object.fromEntries(
+      (collection.entry ?? []).map(({ fullUrl, resource }) => [
+        fullUrl,
+        resource?.resourceType === "MedicationStatement"
+          ? resource.status
+          : resource?.id,
+      ]),
+    );
+  };
+  assert.deepEqual(at(T), {
+    [`${BASE}/Patient/p1`]: "p1",
+    [`${BASE}/MedicationStatement/m1`]: "active",
+    [`${BASE}/Observation/o1`]: "o1",
+    [`${BASE}/Observation/o2`]: "o2",
+  });
+  assert.deepEqual(at(), {
+    [`${BASE}/Patient/p1`]: "p1",
+    [`${BASE}/MedicationStatement/m1`]: "completed",
+    [`${BASE}/Observation/o2`]: "o2",
+    [`${BASE}/Condition/c1`]: "c1",
+  });
+});
+
 test("the hospital's scopes grant what SMART says each grants", async () => {
   const rows: [string, string][] = [
     ["patient/Observation.read", "Observation?patient=p1"],
@@ -667,5 +697,24 @@ test("bad data and a bad asOf are refused with a reason, by the hospital and by 
       asOf,
     );
     assert.throws(() => recordsAt(PATIENTS.p1!, asOf), refused("asOf", reason));
+    assert.throws(
+      () => exportCollection({ hospital, patients: PATIENTS }, "p1", asOf),
+      refused("asOf", reason),
+      asOf,
+    );
+  }
+
+  const exportRows: [string, string, string | undefined, string][] = [
+    ["an unknown patient", "nobody", undefined, ""],
+    ["a Patient made after T", "p3", T, ` at ${T}`],
+    ["a Patient deleted, now", "p4", undefined, ""],
+    ["a Patient deleted, at T", "p4", T, ` at ${T}`],
+  ];
+  for (const [name, patient, asOf, at] of exportRows) {
+    assert.throws(
+      () => exportCollection({ hospital, patients: PATIENTS }, patient, asOf),
+      refused("patient", `${hospital.name} has no patient ${patient}${at}`),
+      name,
+    );
   }
 });

@@ -17,6 +17,8 @@
     ".": "./dist/src/index.js",
     "./node": "./dist/src/node/index.js",
     "./testing": "./dist/src/testing.js",
+    "./web": "./dist/src/web/index.js",
+    "./web/worker": "./dist/src/web/worker.js",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -26,10 +28,12 @@
     "format": "prettier --write .",
     "test": "node -e \"for(const p of ['dist/test','dist/tsconfig.test.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\" && tsc -b tsconfig.test.json && node --test \"dist/test/**/*.test.js\"",
     "synthea": "tsc -b && node dist/src/node/synthea-cli.js",
-    "validate:data": "tsc -b && node validator/validate.mjs"
+    "validate:data": "tsc -b && node validator/validate.mjs",
+    "export": "tsc -b && node dist/src/node/export-cli.js"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/fhir": "0.0.44",
     "@types/node": "22.20.5",
     "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",

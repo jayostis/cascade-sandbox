@@ -1,6 +1,7 @@
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import type { Bundle, Hospital, Resource } from "../index.js";
 import {
   bundleText,
@@ -81,7 +82,9 @@ async function main(output: string): Promise<void> {
   );
 }
 
-const [output] = process.argv.slice(2);
+const {
+  positionals: [output],
+} = parseArgs({ allowPositionals: true });
 if (!output) {
   console.error("usage: npm run synthea -- <Synthea output folder>");
   process.exitCode = 2;

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { Bundle, BundleEntry, Hospital, Resource } from "../index.js";
+import { historyEntry } from "../history.js";
+import type { Bundle, Hospital, Resource } from "../index.js";
 
 export const OBSERVATION_CATEGORIES = ["laboratory", "vital-signs"];
 const PROVIDER_TYPES = ["Organization", "Location"];
@@ -212,10 +213,10 @@ export function fromSynthea(
     const entry = here.flatMap(({ resource, times }) => {
       const final = rewrite(resource, hospital, ids, drugs);
       return times.map((time, index) =>
-        versionEntry(
+        historyEntry(
           index === 0 && times.length > 1 ? earlier(final) : final,
-          index + 1,
-          time,
+          String(index + 1),
+          new Date(time).toISOString(),
         ),
       );
     });
@@ -345,36 +346,6 @@ function earlier(resource: Resource): Resource {
   coding.code = "active";
   if ("display" in coding) coding.display = "Active";
   return copy as Resource;
-}
-
-function versionEntry(
-  resource: Resource,
-  version: number,
-  time: number,
-): BundleEntry {
-  const recorded = new Date(time).toISOString();
-  const created = version === 1;
-  return {
-    resource: {
-      ...resource,
-      meta: {
-        ...(resource.meta as Json | undefined),
-        versionId: String(version),
-        lastUpdated: recorded,
-      },
-    },
-    request: {
-      method: created ? "POST" : "PUT",
-      url: created
-        ? resource.resourceType
-        : `${resource.resourceType}/${resource.id}`,
-    },
-    response: {
-      status: created ? "201" : "200",
-      lastModified: recorded,
-      etag: `W/"${version}"`,
-    },
-  };
 }
 
 function providerKey(encounter: Resource): string {

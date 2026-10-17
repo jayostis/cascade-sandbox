@@ -1,4 +1,4 @@
-import type { Bundle, BundleEntry, Resource } from "./index.js";
+import type { Bundle, BundleEntry, Resource } from "./types.js";
 
 export class HospitalDataError extends Error {
   readonly where: string;
@@ -251,4 +251,71 @@ export function recordsAt(bundle: Bundle, asOf?: string): Resource[] {
     if (resource) resources.push(resource);
   }
   return resources;
+}
+
+/** The period a FHIR date or dateTime names at its precision, in milliseconds, its end excluded: `2024` is the whole year. */
+export function periodOf(
+  text: string,
+): { start: number; end: number } | undefined {
+  const date = /^(\d{4})(?:-(0[1-9]|1[0-2])(?:-(0[1-9]|[12]\d|3[01]))?)?$/.exec(
+    text,
+  );
+  if (date) {
+    const [year, month, day] = date
+      .slice(1)
+      .map((part) => (part === undefined ? undefined : Number(part)));
+    const start = Date.UTC(year!, (month ?? 1) - 1, day ?? 1);
+    const end =
+      day !== undefined
+        ? Date.UTC(year!, month! - 1, day + 1)
+        : month !== undefined
+          ? Date.UTC(year!, month, 1)
+          : Date.UTC(year! + 1, 0, 1);
+    if (
+      year! < 1000 ||
+      (day !== undefined && new Date(start).getUTCDate() !== day)
+    ) {
+      return undefined;
+    }
+    return { start, end };
+  }
+  if (!isInstant(text)) return undefined;
+  const start = Date.parse(text);
+  return { start, end: start + (text.includes(".") ? 1 : 1000) };
+}
+
+/**
+ * A version of a record as a history entry: the one writer of the etag form `W/"<versionId>"`, which `versionsOf`
+ * checks. Version `1` is the creating POST, any other a PUT; `recorded` is both the entry's `lastModified` and the
+ * resource's `meta.lastUpdated`.
+ */
+export function historyEntry(
+  resource: Resource,
+  versionId: string,
+  recorded: string,
+  fullUrl?: string,
+): BundleEntry {
+  const created = versionId === "1";
+  const meta = resource.meta;
+  return {
+    ...(fullUrl === undefined ? {} : { fullUrl }),
+    resource: {
+      ...resource,
+      meta: {
+        ...(typeof meta === "object" && meta !== null && !Array.isArray(meta)
+          ? meta
+          : {}),
+        versionId,
+        lastUpdated: recorded,
+      },
+    },
+    request: created
+      ? { method: "POST", url: resource.resourceType }
+      : { method: "PUT", url: `${resource.resourceType}/${resource.id}` },
+    response: {
+      status: created ? "201" : "200",
+      lastModified: recorded,
+      etag: `W/"${versionId}"`,
+    },
+  };
 }
