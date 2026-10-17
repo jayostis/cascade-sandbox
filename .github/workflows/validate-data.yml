@@ -1,0 +1,32 @@
+name: validate-data
+
+# Every resource the demo hospitals serve, against FHIR R4 and US Core, with the HL7 validator. Not a required check.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "data/**"
+      - "src/**"
+      - "validator/**"
+  workflow_dispatch:
+
+concurrency:
+  group: validate-data-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run validate:data

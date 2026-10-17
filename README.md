@@ -1,8 +1,11 @@
-# @cascade-runtime/demo-hospital
+# @the-cascade-protocol/sandbox
 
 Pretend hospitals that speak SMART on FHIR, for developing and testing an app's
 connection to a hospital with no account, no vendor's sign-in page and no
 network.
+
+Install it as a git dependency pinned by commit (it builds itself on install):
+`npm install --save-dev github:jayostis/cascade-sandbox#<commit>`.
 
 A hospital is one function, `(request: Request) => Promise<Response>`, made from
 that hospital's data and answering at its FHIR base URL: discovery
@@ -12,8 +15,8 @@ histories by patient, as of a date. It uses only `Request`, `Response`, `URL` an
 unchanged in Node and in a browser.
 
 ```ts
-import { demoHospital } from "@cascade-runtime/demo-hospital";
-import { loadHospital } from "@cascade-runtime/demo-hospital/node";
+import { demoHospital } from "@the-cascade-protocol/sandbox";
+import { loadHospital } from "@the-cascade-protocol/sandbox/node";
 
 const north = demoHospital(await loadHospital("cascade-north"));
 const response = await north(
@@ -97,7 +100,7 @@ Every name and record is synthetic, and comes in three kinds.
   medication starts or stops, or none, and the written answer. The answers are
   [`stories/stories.json`](stories/stories.json), outside `data/` so no hospital
   serves them, read through `loadStories()` from
-  `@cascade-runtime/demo-hospital/node`. Each states what changed after the
+  `@the-cascade-protocol/sandbox/node`. Each states what changed after the
   medication, never that the medication caused it. `story-stopped` is also a
   C-CDA document, `stories/story-stopped.xml`, whose records the matcher joins
   to the FHIR copy by their shared NDC (and, where the pod holds a drug products
