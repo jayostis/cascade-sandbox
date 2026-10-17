@@ -111,9 +111,9 @@ data.
 
 ## A real address
 
-`serve(hospitals)` from `@the-cascade-protocol/sandbox/node` listens on
+`serveDemo(hospitals)` from `@the-cascade-protocol/sandbox/node` listens on
 `127.0.0.1` at a port the system picks and resolves `{ origin, setWorldDate,
-close }`. `remapFetch(origin)` is a `fetch` that sends a request for
+close }`. `demoRemapFetch(origin)` is a `fetch` that sends a request for
 `https://<id>.demo.invalid/<rest>` to `<origin>/<id>/<rest>` with a `Forwarded`
 header naming the host asked, and every other request to the real `fetch`. The
 listener rebuilds the address from that header, so each hospital answers at its

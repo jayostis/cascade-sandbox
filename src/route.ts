@@ -3,9 +3,8 @@ import {
   type DemoHospital,
   type DemoHospitalOptions,
 } from "./index.js";
+import { DEMO_HOSTS } from "./hosts.js";
 
-/** Every demo hospital's FHIR base is on a host under this, `<id>.demo.invalid`. */
-const DEMO_HOSTS = ".demo.invalid";
 /** What a page's `fetch` may read of an answer from another origin, as a real server would expose them. */
 const EXPOSED = "Retry-After, WWW-Authenticate, Location";
 
