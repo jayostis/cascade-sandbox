@@ -661,3 +661,137 @@ test("a patient file must hold the patient it is named for", async (t) => {
   );
   await assert.rejects(loadHospital(folder), /rowan/);
 });
+
+test("each error switch fails at its own step, as smart-launcher-v2 does, and an unknown one is refused", async () => {
+  const hospital = demoHospital(north);
+  const through = async (simulate: string) => {
+    const response = await hospital(
+      new Request(`${NORTH}/authorize`, {
+        method: "POST",
+        body: new URLSearchParams(
+          `${authorizeQuery(NORTH)}&patient=${A_NORTH}&decision=allow&simulate_error=${simulate}`,
+        ),
+      }),
+    );
+    const back = redirected(response);
+    if (!back.get("code")) return { back };
+    const token = await exchange(
+      hospital,
+      NORTH,
+      tokenForm(back.get("code") ?? ""),
+    );
+    const accessToken = (await token.clone().json()).access_token;
+    return {
+      back,
+      token,
+      record: accessToken
+        ? await get(hospital, `${NORTH}/Patient/${A_NORTH}`, accessToken)
+        : undefined,
+    };
+  };
+
+  const none = await through("");
+  assert.equal(none.token?.status, 200);
+  assert.equal(none.record?.status, 200);
+
+  const tokenRows: [string, number, string][] = [
+    ["token_invalid_token", 401, "invalid_client"],
+    ["token_invalid_scope", 401, "invalid_scope"],
+  ];
+  for (const [name, status, error] of tokenRows) {
+    const { token, record } = await through(name);
+    assert.equal(token?.status, status, name);
+    assert.equal((await token!.json()).error, error, name);
+    assert.equal(record, undefined, name);
+  }
+
+  const requestRows: [string, RegExp][] = [
+    ["request_invalid_token", /^Bearer error="invalid_token"$/],
+    [
+      "request_expired_token",
+      /^Bearer error="invalid_token", error_description="The access token expired"$/,
+    ],
+  ];
+  for (const [name, challenge] of requestRows) {
+    const { token, record } = await through(name);
+    assert.equal(token?.status, 200, name);
+    assert.equal(record?.status, 401, name);
+    assert.match(
+      record?.headers.get("WWW-Authenticate") ?? "",
+      challenge,
+      name,
+    );
+  }
+
+  const unknown = await through("constructor");
+  assert.equal(unknown.back.get("error"), "invalid_request");
+  assert.equal(unknown.back.get("state"), "s-123");
+
+  const signed = async (simulate: string) => {
+    const code = redirected(
+      await hospital(
+        new Request(`${NORTH}/authorize`, {
+          method: "POST",
+          body: new URLSearchParams(
+            `${authorizeQuery(NORTH)}&patient=${A_NORTH}&decision=allow&simulate_error=${simulate}`,
+          ),
+        }),
+      ),
+    ).get("code");
+    return code ?? "";
+  };
+  const plainCode = await signed("");
+  const posted = await exchange(
+    hospital,
+    NORTH,
+    tokenForm(plainCode, { simulate_error: "token_invalid_token" }),
+  );
+  assert.equal(posted.status, 200, "a switch posted to the token request");
+  const { access_token: plainToken } = await posted.json();
+  assert.equal(
+    (
+      await get(
+        hospital,
+        `${NORTH}/Patient/${A_NORTH}?simulate_error=request_invalid_token`,
+        plainToken,
+      )
+    ).status,
+    200,
+    "a switch queried on a record request",
+  );
+  const failing = await (
+    await exchange(
+      hospital,
+      NORTH,
+      tokenForm(await signed("request_invalid_token")),
+    )
+  ).json();
+  assert.equal(failing.sim_error, "Invalid token");
+  assert.equal(
+    (
+      await get(
+        hospital,
+        `${NORTH}/Patient/${A_NORTH}?simulate_error=`,
+        failing.access_token,
+      )
+    ).status,
+    401,
+    "a query cannot clear a switch",
+  );
+
+  const page = await (
+    await authorize(hospital, NORTH, {
+      simulate_error: "request_expired_token",
+    })
+  ).text();
+  assert.match(page, /<select id="simulate_error" name="simulate_error"/);
+  for (const name of [
+    "token_invalid_token",
+    "token_invalid_scope",
+    "request_invalid_token",
+    "request_expired_token",
+  ]) {
+    assert.ok(page.includes(`<option value="${name}"`), name);
+  }
+  assert.match(page, /<option value="request_expired_token" selected>/);
+});

@@ -27,6 +27,25 @@ export function namesOf(
     : { family: id, given: "" };
 }
 
+export const SIMULATED_ERRORS = {
+  token_invalid_token: "The token request is refused: invalid client",
+  token_invalid_scope: "The token request is refused: invalid scope",
+  request_invalid_token: "Every record request is refused: invalid token",
+  request_expired_token: "Every record request is refused: token expired",
+} as const;
+
+export type SimulatedError = keyof typeof SIMULATED_ERRORS;
+
+export function simulatedError(
+  name: string | null | undefined,
+): SimulatedError | undefined {
+  return name !== null &&
+    name !== undefined &&
+    Object.hasOwn(SIMULATED_ERRORS, name)
+    ? (name as SimulatedError)
+    : undefined;
+}
+
 const LONG_DAY = new Intl.DateTimeFormat("en-GB", {
   dateStyle: "long",
   timeZone: "UTC",
