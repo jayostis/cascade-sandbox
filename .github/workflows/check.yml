@@ -65,7 +65,7 @@ jobs:
         working-directory: sandbox
       - run: npm ci
         working-directory: runtime
-      - run: npm install --no-save --install-links -w packages/cascade-runtime "$GITHUB_WORKSPACE/sandbox"
+      - run: npm install --no-save --install-links -w packages/cascade-runtime -w packages/site "$GITHUB_WORKSPACE/sandbox"
         working-directory: runtime
       - run: npx tsc -b
         working-directory: runtime
