@@ -12,6 +12,7 @@ import {
 
 const TYPES = [
   "Patient",
+  "DocumentReference",
   "Condition",
   "Encounter",
   "Observation",
@@ -36,6 +37,8 @@ const MAIDEN_NAME =
   "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName";
 
 const REAL = "Real Facility Medical Center";
+const NOTE = "Ann12 Lee34 is a 45 year-old woman. Vitamin B12 is low.";
+const base64 = (note: string) => Buffer.from(note).toString("base64");
 const provider = (id: string) => ({
   reference: `Organization?identifier=https://github.com/synthetichealth/synthea|${id}`,
   display: REAL,
@@ -129,8 +132,42 @@ const resources = [
   { resourceType: "Claim", id: "claim", patient: { reference: "urn:uuid:p" } },
   {
     resourceType: "DiagnosticReport",
+    id: "survey-panel",
+    encounter: { reference: "urn:uuid:e3" },
+    issued: "2022-03-01T10:30:00Z",
+    result: [{ reference: "urn:uuid:survey" }],
+  },
+  {
+    resourceType: "DiagnosticReport",
+    id: "lab-panel",
+    encounter: { reference: "urn:uuid:e3" },
+    issued: "2022-03-01T10:30:00Z",
+    result: [{ reference: "urn:uuid:lab" }],
+  },
+  {
+    resourceType: "DiagnosticReport",
     id: "report",
     encounter: { reference: "urn:uuid:e1" },
+    issued: "2020-01-01T10:55:00Z",
+    performer: [
+      {
+        reference: "Practitioner?identifier=http://hl7.org/fhir/sid/us-npi|1",
+        display: "Dr. Kim12 Ito34",
+      },
+    ],
+    presentedForm: [{ contentType: "text/plain", data: base64(NOTE) }],
+  },
+  {
+    resourceType: "DocumentReference",
+    id: "note",
+    status: "superseded",
+    subject: { reference: "urn:uuid:p" },
+    date: "2022-03-01T10:55:00Z",
+    custodian: provider("other"),
+    content: [
+      { attachment: { contentType: "text/plain", data: base64(NOTE) } },
+    ],
+    context: { encounter: [{ reference: "urn:uuid:e3" }] },
   },
   {
     resourceType: "Observation",
@@ -205,6 +242,8 @@ const providers = [
 ] as Resource[];
 
 const instant = (text: string) => new Date(text).toISOString();
+const text = (form: unknown) =>
+  Buffer.from(String((form as { data: string }).data), "base64").toString();
 
 /** What a file holds of one Synthea record: each version's time and state. */
 function versionsIn(file: PatientFile) {
@@ -240,7 +279,6 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
   }
   for (const records of [north, south]) {
     assert.deepEqual(of(records, "Claim"), []);
-    assert.deepEqual(of(records, "DiagnosticReport"), []);
     const text = JSON.stringify(records);
     assert.ok(!text.includes("urn:uuid:") && !text.includes(REAL));
     assert.ok(!text.includes("synthetichealth.github.io"));
@@ -252,6 +290,31 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
   assert.equal(new Set(of(north, "Encounter").map((e) => e.id)).size, 3);
   assert.equal(of(south, "Encounter").length, 2);
   assert.equal(of(north, "Observation").length, 0);
+  assert.deepEqual(
+    of(north, "DiagnosticReport").map((report) => [
+      report.performer,
+      text((report.presentedForm as unknown[])[0]),
+    ]),
+    [
+      [
+        [{ type: "Practitioner", display: "Dr. Kim Ito" }],
+        "Ann Lee is a 45 year-old woman. Vitamin B12 is low.",
+      ],
+    ],
+  );
+  assert.deepEqual(
+    of(south, "DiagnosticReport").map((report) => report.result),
+    [[{ reference: `Observation/${of(south, "Observation")[0]!.id}` }]],
+  );
+  const [note, ...others] = of(south, "DocumentReference");
+  assert.deepEqual(others, []);
+  assert.equal(note!.status, "current");
+  assert.deepEqual(note!.custodian, { display: SOUTH.hospital.name });
+  assert.equal(
+    text((note!.content as { attachment: unknown }[])[0]!.attachment),
+    "Ann Lee is a 45 year-old woman. Vitamin B12 is low.",
+  );
+  assert.deepEqual(of(north, "DocumentReference"), []);
   assert.equal(of(north, "Procedure").length, 1);
   assert.equal(of(south, "Procedure").length, 0);
   assert.deepEqual(
