@@ -6,6 +6,7 @@ import {
   type PatientFile,
   fromSynthea,
   medicationRows,
+  payerNames,
   providerDetails,
   syntheaId,
 } from "../src/node/synthea.js";
@@ -37,7 +38,11 @@ const MAIDEN_NAME =
   "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName";
 
 const REAL = "Real Facility Medical Center";
-const NOTE = "Ann12 Lee34 is a 45 year-old woman. Vitamin B12 is low.";
+const NOTE =
+  "Ann12 Lee34 is a 45 year-old woman. Vitamin B12 is low. Patient currently has Humana.";
+const CLEANED =
+  "Ann Lee is a 45 year-old woman. Vitamin B12 is low. Patient currently has Cascade Demo Health Plan B.";
+const PAYERS = ["Aetna", "Humana"];
 const base64 = (note: string) => Buffer.from(note).toString("base64");
 const provider = (id: string) => ({
   reference: `Organization?identifier=https://github.com/synthetichealth/synthea|${id}`,
@@ -130,6 +135,23 @@ const resources = [
   encounter("e4", "other", "2022-09-01"),
   encounter("e5", "busy", "2021-09-01"),
   { resourceType: "Claim", id: "claim", patient: { reference: "urn:uuid:p" } },
+  {
+    resourceType: "ExplanationOfBenefit",
+    id: "eob-1",
+    insurer: { display: "Humana" },
+  },
+  {
+    resourceType: "ExplanationOfBenefit",
+    id: "eob-2",
+    insurer: { display: "Medicare" },
+  },
+  {
+    resourceType: "DiagnosticReport",
+    id: "split-panel",
+    encounter: { reference: "urn:uuid:e1" },
+    issued: "2020-01-01T10:30:00Z",
+    result: [{ reference: "urn:uuid:lab" }],
+  },
   {
     resourceType: "DiagnosticReport",
     id: "survey-panel",
@@ -267,7 +289,7 @@ function versionsIn(file: PatientFile) {
 }
 
 test("a Synthea person becomes each hospital's own patient, trimmed and renamed", () => {
-  const files = fromSynthea(bundle, [NORTH, SOUTH], rows);
+  const files = fromSynthea(bundle, [NORTH, SOUTH], rows, PAYERS);
   const [north, south] = files.map((file) =>
     (file.bundle.entry ?? []).map((entry) => entry.resource),
   ) as [Resource[], Resource[]];
@@ -295,12 +317,7 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
       report.performer,
       text((report.presentedForm as unknown[])[0]),
     ]),
-    [
-      [
-        [{ type: "Practitioner", display: "Dr. Kim Ito" }],
-        "Ann Lee is a 45 year-old woman. Vitamin B12 is low.",
-      ],
-    ],
+    [[[{ type: "Practitioner", display: "Dr. Kim Ito" }], CLEANED]],
   );
   assert.deepEqual(
     of(south, "DiagnosticReport").map((report) => report.result),
@@ -312,7 +329,7 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
   assert.deepEqual(note!.custodian, { display: SOUTH.hospital.name });
   assert.equal(
     text((note!.content as { attachment: unknown }[])[0]!.attachment),
-    "Ann Lee is a 45 year-old woman. Vitamin B12 is low.",
+    CLEANED,
   );
   assert.deepEqual(of(north, "DocumentReference"), []);
   assert.equal(of(north, "Procedure").length, 1);
@@ -342,6 +359,7 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
       value: `SYN-${files[1]!.id.slice(4, 12).toUpperCase()}`,
     },
   ]);
+  assert.deepEqual(payerNames([bundle]), ["Humana"]);
   assert.deepEqual(providerDetails(providers), {
     names: [REAL, "Unseen Real Clinic"],
     addresses: ["1 Real Street", "2 Real Avenue"],
@@ -350,7 +368,12 @@ test("a Synthea person becomes each hospital's own patient, trimmed and renamed"
 });
 
 test("a record is first held when its final content first holds, and a later change is a second version", () => {
-  const [northFile, southFile] = fromSynthea(bundle, [NORTH, SOUTH], rows);
+  const [northFile, southFile] = fromSynthea(
+    bundle,
+    [NORTH, SOUTH],
+    rows,
+    PAYERS,
+  );
   const north = versionsIn(northFile!);
   const south = versionsIn(southFile!);
 
@@ -433,7 +456,7 @@ test("a record is first held when its final content first holds, and a later cha
 });
 
 test("a Patient has one version, at the earliest record time of its file", () => {
-  const files = fromSynthea(bundle, [NORTH, SOUTH], rows);
+  const files = fromSynthea(bundle, [NORTH, SOUTH], rows, PAYERS);
   const patientTimes = files.map((file) => {
     const entries = file.bundle.entry ?? [];
     const patients = entries.filter(
