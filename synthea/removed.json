@@ -419,5 +419,13 @@
     "5303327300",
     "888-687-8863 Or 509-525-5200",
     "9494527699"
+  ],
+  "payers": [
+    "Aetna",
+    "Anthem",
+    "Blue Cross Blue Shield",
+    "Cigna Health",
+    "Humana",
+    "UnitedHealthcare"
   ]
 }

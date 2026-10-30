@@ -150,6 +150,7 @@ export function fromSynthea(
   bundle: Bundle,
   hospitals: HospitalFolder[],
   medications: MedicationRow[],
+  payers: string[] = [],
 ): PatientFile[] {
   const [home, away] = hospitals;
   if (!home) throw new Error("A person needs at least one hospital");
@@ -164,18 +165,9 @@ export function fromSynthea(
       .filter((resource) => resource.resourceType === "Medication")
       .map((resource) => [resource.id, resource.code]),
   );
-  const served = resources.filter(
+  const kept = resources.filter(
     (resource) =>
       hospitals.some((hospital) => holds(hospital, resource)) && keep(resource),
-  );
-  const results = new Set(served.map((resource) => resource.id));
-  const kept = served.filter(
-    (resource) =>
-      resource.resourceType !== "DiagnosticReport" ||
-      resource.presentedForm !== undefined ||
-      ((resource.result as Json[] | undefined) ?? []).some((result) =>
-        results.has(uuidOf(result.reference) ?? ""),
-      ),
   );
   const patient = kept.find((resource) => resource.resourceType === "Patient");
   if (!patient) throw new Error("A Synthea bundle holds one Patient");
@@ -248,7 +240,16 @@ export function fromSynthea(
   }
 
   return hospitals.map((hospital) => {
-    const here = placed.get(hospital) ?? [];
+    const all = placed.get(hospital) ?? [];
+    const served = new Set(all.map(({ resource }) => resource.id));
+    const here = all.filter(
+      ({ resource }) =>
+        resource.resourceType !== "DiagnosticReport" ||
+        resource.presentedForm !== undefined ||
+        ((resource.result as Json[] | undefined) ?? []).some((result) =>
+          served.has(uuidOf(result.reference) ?? ""),
+        ),
+    );
     const earliest = Math.min(...here.flatMap((each) => each.times));
     if (!Number.isFinite(earliest)) {
       throw new Error(
@@ -265,7 +266,7 @@ export function fromSynthea(
       ]),
     );
     const entry = here.flatMap(({ resource, times }) => {
-      const final = rewrite(resource, hospital, ids, drugs, named);
+      const final = rewrite(resource, hospital, ids, drugs, named, payers);
       return times.map((time, index) =>
         historyEntry(
           index === 0 && times.length > 1 ? earlier(final) : final,
@@ -426,6 +427,7 @@ function rewrite(
   ids: Map<string, string>,
   drugs: Map<string, unknown>,
   named: string[],
+  payers: string[],
 ): Resource {
   const copy = structuredClone(resource) as Json;
   const reference = ids.get(resource.id) ?? "";
@@ -475,9 +477,33 @@ function rewrite(
     for (const word of named) {
       text = text.replaceAll(word, withoutDigits(word));
     }
+    payers.forEach((payer, index) => {
+      text = text.replaceAll(payer, fictionalPayer(index));
+    });
     attachment.data = Buffer.from(text, "utf8").toString("base64");
   }
   return pruned(copy, hospital, ids) as Resource;
+}
+
+/** Synthea's payers that are no company: public programs, and none. */
+const PUBLIC_PAYERS = ["Medicare", "Medicaid", "Dual Eligible", "NO_INSURANCE"];
+
+/** Every company that pays for a visit in the bundles, by the name Synthea gives it, sorted. */
+export function payerNames(bundles: Bundle[]): string[] {
+  const names = bundles.flatMap((bundle) =>
+    (bundle.entry ?? []).flatMap(({ resource }) => {
+      if (resource?.resourceType !== "ExplanationOfBenefit") return [];
+      const name = (resource.insurer as Json | undefined)?.display;
+      return typeof name === "string" && !PUBLIC_PAYERS.includes(name)
+        ? [name]
+        : [];
+    }),
+  );
+  return [...new Set(names)].sort();
+}
+
+function fictionalPayer(index: number): string {
+  return `Cascade Demo Health Plan ${String.fromCharCode(65 + index)}`;
 }
 
 /** A note's or a report's attachments. */

@@ -22,8 +22,10 @@ use or test the demo hospitals. This folder says how to make it again.
   hospitals is split by provider: the provider with the most encounters goes to
   the first.
 - `removed.json`: every real provider name, street address and phone number in
-  Synthea's hospital and practitioner files, whether or not the chosen people's
-  records named it. The data test checks that none of them is left in `people/`.
+  Synthea's hospital and practitioner files, and every insurance company that
+  pays for a visit in the run, whether or not the chosen people's records named
+  it. The data test checks that none of them is left in `people/`, a note's
+  text included.
 
 ## Regenerating
 
@@ -60,7 +62,7 @@ hospital is given a past by cutting this one run by date.
    Claim and ExplanationOfBenefit among them;
 2. keeps only `laboratory` and `vital-signs` Observations, and a
    DiagnosticReport only if it carries its text (`presentedForm`) or one of
-   its results is kept; each visit's note is a DocumentReference and a
+   its results is kept at the same hospital; each visit's note is a DocumentReference and a
    DiagnosticReport, its text inline as base64 `text/plain`, as Synthea writes
    it;
 3. splits a person at two hospitals by provider, and refuses a third; a record
@@ -73,7 +75,10 @@ hospital is given a past by cutting this one run by date.
    reference, and inlines a Medication's code into the MedicationRequest that
    referenced it;
 6. replaces every organization's and location's name with the hospital's, and
-   strips Synthea's digits from people's names, in a note's text too; serves
+   strips Synthea's digits from people's names, in a note's text too; names
+   each insurance company in a note by a fictional one (`Cascade Demo Health
+Plan A`, `B`, ... in the order of `removed.json`; Medicare, Medicaid and
+   Dual Eligible are kept, being no company); serves
    every note `current` (Synthea marks each but a person's last
    `superseded`, though a visit's note is not replaced by the next visit's);
 7. gives the Patient one identifier, the hospital's MRN, and removes Synthea's

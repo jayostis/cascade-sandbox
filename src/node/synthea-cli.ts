@@ -9,6 +9,7 @@ import {
   fromSynthea,
   generatedPerson,
   medicationRows,
+  payerNames,
   providerDetails,
   type HospitalFolder,
 } from "./synthea.js";
@@ -59,6 +60,18 @@ async function main(output: string): Promise<void> {
     hospitals.set(folder, { folder, hospital });
   }
 
+  const payers = payerNames(
+    await Promise.all(
+      files
+        .filter(
+          (name) =>
+            name.endsWith(".json") &&
+            !name.startsWith("hospitalInformation") &&
+            !name.startsWith("practitionerInformation"),
+        )
+        .map((name) => readJson<Bundle>(join(fhir, name))),
+    ),
+  );
   const stops = await readFile(join(output, "csv", "medications.csv"), "utf8");
   const written: { chosen: Chosen; sources: ReturnType<typeof fromSynthea> }[] =
     [];
@@ -71,6 +84,7 @@ async function main(output: string): Promise<void> {
         await readJson<Bundle>(join(fhir, file)),
         chosen.hospitals.map((folder) => hospitals.get(folder)!),
         medicationRows(stops, chosen.synthea),
+        payers,
       ),
     });
   }
@@ -92,7 +106,7 @@ async function main(output: string): Promise<void> {
   }
   await writeFile(
     join(PACKAGE, "synthea", "removed.json"),
-    `${JSON.stringify(providerDetails(providers), null, 2)}\n`,
+    `${JSON.stringify({ ...providerDetails(providers), payers }, null, 2)}\n`,
   );
 }
 
