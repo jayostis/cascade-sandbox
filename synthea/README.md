@@ -57,19 +57,25 @@ hospital is given a past by cutting this one run by date.
 `src/node/synthea.ts`, for each chosen person:
 
 1. keeps the types each hospital's `hospital.json` lists, and drops the rest,
-   Claim and ExplanationOfBenefit among them, and DiagnosticReport whatever
-   `types` says (Synthea's carry their note text as base64);
-2. keeps only `laboratory` and `vital-signs` Observations;
+   Claim and ExplanationOfBenefit among them;
+2. keeps only `laboratory` and `vital-signs` Observations, and a
+   DiagnosticReport only if it carries its text (`presentedForm`) or one of
+   its results is kept; each visit's note is a DocumentReference and a
+   DiagnosticReport, its text inline as base64 `text/plain`, as Synthea writes
+   it;
 3. splits a person at two hospitals by provider, and refuses a third; a record
    of a visit goes to that visit's hospital, and the three kinds a hospital
    reconciles at intake may be copied to the other (see "Versions");
 4. names each record `syn-` and 16 hex digits of SHA-256 of the hospital's
    folder and Synthea's id, so each hospital has its own ids;
 5. turns `urn:uuid:` references into `Type/id`, removes those to records not
-   served there, keeps only the `display` of a conditional reference, and
-   inlines a Medication's code into the MedicationRequest that referenced it;
+   served there, keeps only the `type` and `display` of a conditional
+   reference, and inlines a Medication's code into the MedicationRequest that
+   referenced it;
 6. replaces every organization's and location's name with the hospital's, and
-   strips Synthea's digits from people's names;
+   strips Synthea's digits from people's names, in a note's text too; serves
+   every note `current` (Synthea marks each but a person's last
+   `superseded`, though a visit's note is not replaced by the next visit's);
 7. gives the Patient one identifier, the hospital's MRN, and removes Synthea's
    identifiers and narratives from every record, and from the Patient the
    extensions of `synthetichealth.github.io` (the quality- and
@@ -85,8 +91,9 @@ has the instant its final content first holds as its first version
 `POST` then a `PUT`).
 
 - **First version.** MedicationRequest `authoredOn`; Condition and
-  AllergyIntolerance `recordedDate`; Observation `issued`; Immunization
-  `occurrenceDateTime`; Procedure `performedPeriod.end`; Encounter `period.end`.
+  AllergyIntolerance `recordedDate`; Observation and DiagnosticReport
+  `issued`; DocumentReference `date`; Immunization `occurrenceDateTime`;
+  Procedure `performedPeriod.end`; Encounter `period.end`.
 - **A change after it is a second version.** A completed MedicationRequest
   stops at the earlier of its `STOP` in `csv/medications.csv` (the row of its
   encounter, RxNorm code and `START` equal to `authoredOn`) and the next

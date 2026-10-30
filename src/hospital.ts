@@ -56,6 +56,7 @@ const AUTHORIZE_PARAMETERS = [
 const CATEGORISED = new Set([
   "Condition",
   "DiagnosticReport",
+  "DocumentReference",
   "MedicationRequest",
   "MedicationStatement",
   "Observation",
