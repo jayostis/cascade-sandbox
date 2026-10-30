@@ -150,6 +150,7 @@ export function fromSynthea(
   bundle: Bundle,
   hospitals: HospitalFolder[],
   medications: MedicationRow[],
+  payers: string[] = [],
 ): PatientFile[] {
   const [home, away] = hospitals;
   if (!home) throw new Error("A person needs at least one hospital");
@@ -170,6 +171,7 @@ export function fromSynthea(
   );
   const patient = kept.find((resource) => resource.resourceType === "Patient");
   if (!patient) throw new Error("A Synthea bundle holds one Patient");
+  const named = digitedNames(patient);
 
   const encounters = kept.filter((r) => r.resourceType === "Encounter");
   const visits = new Map<string, number>();
@@ -209,7 +211,7 @@ export function fromSynthea(
     const encounter =
       resource.resourceType === "Encounter"
         ? resource.id
-        : uuidOf((resource.encounter as Json | undefined)?.reference);
+        : uuidOf(visitOf(resource)?.reference);
     const at = (encounter && encounterAt.get(encounter)) || home;
     const first = recordedAt(resource);
     const stop = stoppedAt(resource, kept, medications, drugs);
@@ -238,7 +240,16 @@ export function fromSynthea(
   }
 
   return hospitals.map((hospital) => {
-    const here = placed.get(hospital) ?? [];
+    const all = placed.get(hospital) ?? [];
+    const served = new Set(all.map(({ resource }) => resource.id));
+    const here = all.filter(
+      ({ resource }) =>
+        resource.resourceType !== "DiagnosticReport" ||
+        resource.presentedForm !== undefined ||
+        ((resource.result as Json[] | undefined) ?? []).some((result) =>
+          served.has(uuidOf(result.reference) ?? ""),
+        ),
+    );
     const earliest = Math.min(...here.flatMap((each) => each.times));
     if (!Number.isFinite(earliest)) {
       throw new Error(
@@ -255,7 +266,7 @@ export function fromSynthea(
       ]),
     );
     const entry = here.flatMap(({ resource, times }) => {
-      const final = rewrite(resource, hospital, ids, drugs);
+      const final = rewrite(resource, hospital, ids, drugs, named, payers);
       return times.map((time, index) =>
         historyEntry(
           index === 0 && times.length > 1 ? earlier(final) : final,
@@ -277,7 +288,6 @@ function holds(hospital: HospitalFolder, resource: Resource): boolean {
 }
 
 function keep(resource: Resource): boolean {
-  if (resource.resourceType === "DiagnosticReport") return false;
   if (resource.resourceType !== "Observation") return true;
   const codes = categoryCodes(resource);
   return (
@@ -294,6 +304,12 @@ function categoryCodes(resource: Resource): string[] {
   );
 }
 
+/** The visit a record was made at: a note names it in `context`. */
+function visitOf(resource: Resource): Json | undefined {
+  const context = resource.context as { encounter?: Json[] } | undefined;
+  return (resource.encounter as Json | undefined) ?? context?.encounter?.[0];
+}
+
 function period(resource: Resource): Json {
   return (resource.period as Json | undefined) ?? {};
 }
@@ -308,6 +324,8 @@ function recordedAt(resource: Resource): number {
     Immunization: resource.occurrenceDateTime,
     Procedure: (resource.performedPeriod as Json | undefined)?.end,
     Encounter: period(resource).end,
+    DiagnosticReport: resource.issued,
+    DocumentReference: resource.date,
   };
   const at = Date.parse(String(dates[resource.resourceType]));
   if (Number.isNaN(at)) {
@@ -408,6 +426,8 @@ function rewrite(
   hospital: HospitalFolder,
   ids: Map<string, string>,
   drugs: Map<string, unknown>,
+  named: string[],
+  payers: string[],
 ): Resource {
   const copy = structuredClone(resource) as Json;
   const reference = ids.get(resource.id) ?? "";
@@ -447,7 +467,60 @@ function rewrite(
     copy.medicationCodeableConcept = drugs.get(medication);
     delete copy.medicationReference;
   }
+  if (resource.resourceType === "DocumentReference") {
+    // A visit's note is not replaced by the next visit's.
+    copy.status = "current";
+  }
+  for (const attachment of attachments(copy)) {
+    if (typeof attachment.data !== "string") continue;
+    let text = Buffer.from(attachment.data, "base64").toString("utf8");
+    for (const word of named) {
+      text = text.replaceAll(word, withoutDigits(word));
+    }
+    payers.forEach((payer, index) => {
+      text = text.replaceAll(payer, fictionalPayer(index));
+    });
+    attachment.data = Buffer.from(text, "utf8").toString("base64");
+  }
   return pruned(copy, hospital, ids) as Resource;
+}
+
+/** Synthea's payers that are no company: public programs, and none. */
+const PUBLIC_PAYERS = ["Medicare", "Medicaid", "Dual Eligible", "NO_INSURANCE"];
+
+/** Every company that pays for a visit in the bundles, by the name Synthea gives it, sorted. */
+export function payerNames(bundles: Bundle[]): string[] {
+  const names = bundles.flatMap((bundle) =>
+    (bundle.entry ?? []).flatMap(({ resource }) => {
+      if (resource?.resourceType !== "ExplanationOfBenefit") return [];
+      const name = (resource.insurer as Json | undefined)?.display;
+      return typeof name === "string" && !PUBLIC_PAYERS.includes(name)
+        ? [name]
+        : [];
+    }),
+  );
+  return [...new Set(names)].sort();
+}
+
+function fictionalPayer(index: number): string {
+  return `Cascade Demo Health Plan ${String.fromCharCode(65 + index)}`;
+}
+
+/** A note's or a report's attachments. */
+function attachments(record: Json): Json[] {
+  const content = (record.content as Json[] | undefined) ?? [];
+  return [
+    ...content.flatMap((each) =>
+      each.attachment === undefined ? [] : [each.attachment as Json],
+    ),
+    ...((record.presentedForm as Json[] | undefined) ?? []),
+  ];
+}
+
+/** The words of a Patient's names that Synthea gave digits. */
+function digitedNames(patient: Resource): string[] {
+  const words = JSON.stringify(patient.name ?? []).match(/\p{L}+\d+/gu) ?? [];
+  return [...new Set(words)].sort((a, b) => b.length - a.length);
 }
 
 function stripDigits(value: unknown): unknown {
@@ -513,6 +586,6 @@ function reference(
     return { display: hospital.hospital.name };
   }
   return typeof object.display === "string"
-    ? { display: withoutDigits(object.display) }
+    ? { type, display: withoutDigits(object.display) }
     : GONE;
 }

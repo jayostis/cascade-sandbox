@@ -39,13 +39,13 @@ test("the hospitals serve the people the package holds: each patient at each hos
       "story-statin": 9,
       "story-stopped": 8,
       "story-too-little": 6,
-      "syn-c521b4f4b8f5b303": 647,
-      "syn-eb3d267fcb803202": 653,
+      "syn-c521b4f4b8f5b303": 745,
+      "syn-eb3d267fcb803202": 780,
     },
     "cascade-south": {
       "s-48213": 10,
-      "syn-0c7c8edf48f450e1": 504,
-      "syn-25b2cdfcaf0b380e": 620,
+      "syn-0c7c8edf48f450e1": 566,
+      "syn-25b2cdfcaf0b380e": 736,
     },
   });
 });
@@ -113,7 +113,12 @@ function references(value: unknown): Record<string, unknown>[] {
   return [...own, ...Object.values(object).flatMap(references)];
 }
 
-const PROVIDER_FIELDS = ["serviceProvider", "location", "performer"];
+const PROVIDER_FIELDS = [
+  "serviceProvider",
+  "location",
+  "performer",
+  "custodian",
+];
 
 test("every patient file keeps the hospitals' data rules", async () => {
   const idsAt = new Map<string, Set<string>>();
@@ -160,13 +165,16 @@ test("every patient file keeps the hospitals' data rules", async () => {
         }
         for (const field of PROVIDER_FIELDS) {
           for (const ref of references(record[field])) {
-            if (!String(ref.reference ?? "").startsWith("Practitioner")) {
+            const practitioner =
+              ref.type === "Practitioner" ||
+              String(ref.reference ?? "").startsWith("Practitioner");
+            if (!practitioner) {
               assert.equal(ref.display ?? hospital.name, hospital.name, name);
             }
           }
         }
         if (patient.startsWith("syn-")) {
-          for (const text of strings(record)) {
+          for (const text of [...strings(record), ...notes(record)]) {
             assert.ok(!text.toLowerCase().includes("urn:uuid:"), name);
             const named = forbidden.exec(text)?.[0];
             assert.equal(named, undefined, `${name} names "${named}"`);
@@ -193,6 +201,17 @@ test("every patient file keeps the hospitals' data rules", async () => {
   assert.ok(atBoth.length >= 2, "patient A and the Synthea person at both");
 });
 
+/** The text of each attachment of a note or a report. */
+function notes(record: Resource): string[] {
+  const content = (record.content ?? []) as {
+    attachment?: { data?: string };
+  }[];
+  const forms = (record.presentedForm ?? []) as { data?: string }[];
+  return [...content.map(({ attachment }) => attachment ?? {}), ...forms]
+    .flatMap(({ data }) => (typeof data === "string" ? [data] : []))
+    .map((data) => Buffer.from(data, "base64").toString("utf8"));
+}
+
 /** The instant a record's final content first holds, by its type. */
 function firstHeld(record: Resource): number | undefined {
   const dates: Record<string, unknown> = {
@@ -203,6 +222,8 @@ function firstHeld(record: Resource): number | undefined {
     Immunization: record.occurrenceDateTime,
     Procedure: (record.performedPeriod as { end?: string } | undefined)?.end,
     Encounter: (record.period as { end?: string } | undefined)?.end,
+    DiagnosticReport: record.issued,
+    DocumentReference: record.date,
   };
   const at = Date.parse(String(dates[record.resourceType]));
   return Number.isNaN(at) ? undefined : at;
@@ -269,12 +290,14 @@ test("a Synthea patient is a history cut by the dates Synthea gave: a record is 
       }
       const text = JSON.stringify(bundle);
       assert.ok(!text.includes("synthetichealth.github.io"), where);
-      assert.ok(
-        all.every(
-          ({ resource }) => resource?.resourceType !== "DiagnosticReport",
-        ),
-        where,
-      );
+      for (const type of ["DiagnosticReport", "DocumentReference"])
+        assert.ok(
+          all.some(
+            ({ resource }) =>
+              resource?.resourceType === type && notes(resource).length > 0,
+          ),
+          `${where} holds a ${type} with its text`,
+        );
     }
   }
   assert.equal(files, 4);
