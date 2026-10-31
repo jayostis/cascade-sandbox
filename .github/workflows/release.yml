@@ -1,0 +1,61 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to release, when it is not the head of main.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          npm pkg set "version=0.0.0-commit-$commit"
+          mkdir -p "$RUNNER_TEMP/package"
+          file=$(npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/package" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8"))[0].filename')
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "file=$RUNNER_TEMP/package/$file" >> "$GITHUB_OUTPUT"
+      - if: ${{ github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ steps.pack.outputs.commit }}
+          FILE: ${{ steps.pack.outputs.file }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="build-$COMMIT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::$tag is a release already"
+            exit 0
+          fi
+          gh release create "$tag" "$FILE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$COMMIT" \
+            --title "$tag" \
+            --notes "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$(basename "$FILE")" \
+            --prerelease \
+            --latest=false
