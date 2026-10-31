@@ -8,22 +8,28 @@ on:
   workflow_dispatch:
     inputs:
       commit:
-        description: The commit to release, when it is not the head of main.
+        description: The commit on main to release, when it is not the head of main.
         required: false
 
 permissions:
   contents: read
 
 jobs:
-  release:
+  pack:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      commit: ${{ steps.pack.outputs.commit }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit || github.sha }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
           persist-credentials: false
+      - if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor HEAD origin/main || { echo "::error::$(git rev-parse HEAD) is not on main"; exit 1; }
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
@@ -36,14 +42,28 @@ jobs:
           commit=$(git rev-parse HEAD)
           npm pkg set "version=0.0.0-commit-$commit"
           mkdir -p "$RUNNER_TEMP/package"
-          file=$(npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/package" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8"))[0].filename')
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/package"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
-          echo "file=$RUNNER_TEMP/package/$file" >> "$GITHUB_OUTPUT"
-      - if: ${{ github.event_name != 'pull_request' }}
-        env:
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: ${{ runner.temp }}/package/*.tgz
+          if-no-files-found: error
+
+  release:
+    needs: pack
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: package
+          path: package
+      - env:
           GH_TOKEN: ${{ github.token }}
-          COMMIT: ${{ steps.pack.outputs.commit }}
-          FILE: ${{ steps.pack.outputs.file }}
+          COMMIT: ${{ needs.pack.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -52,10 +72,11 @@ jobs:
             echo "::notice::$tag is a release already"
             exit 0
           fi
-          gh release create "$tag" "$FILE" \
+          file=$(ls package/*.tgz)
+          gh release create "$tag" "$file" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$COMMIT" \
             --title "$tag" \
-            --notes "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$(basename "$FILE")" \
+            --notes "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$(basename "$file")" \
             --prerelease \
             --latest=false
