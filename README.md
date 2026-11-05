@@ -33,6 +33,11 @@ codes and tokens expire by) and `asOf` (the world's date, a FHIR instant such as
 `2024-02-01T00:00:00Z`: the hospital answers with its records as they stood
 then; with none, with each record's latest version).
 
+## Docs
+
+- [The Cascade hub](https://jayostis.github.io/cascade-runtime-js/): where to go for each thing, and every repository.
+- [FHIR R4 adapter](https://jayostis.github.io/cascade-runtime-js/adapters/fhir-r4/): which parts of the FHIR the sandbox serves a pod carries, and what it drops.
+
 ## Failing on purpose
 
 To test an app's error handling, add `simulate_error=<name>` to the authorize request, or pick "Simulate a failure" on
