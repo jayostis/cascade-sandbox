@@ -27,7 +27,31 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npm test
+      - uses: actions/checkout@v7
+        with:
+          repository: jayostis/cascade-runtime-js
+          ref: main
+          path: .runtime-js
+          sparse-checkout: |
+            scripts
+            packages/site/src
+          persist-credentials: false
+      - run: npm run build:test
+      - run: >-
+          node --test
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=./.runtime-js/scripts/junit-reporter.mjs --test-reporter-destination=report/junit.xml
+          "dist/test/**/*.test.js"
+      - if: ${{ !cancelled() }}
+        run: node .runtime-js/scripts/spec-shape.mjs report/junit.xml test/spec.json
+      - if: ${{ !cancelled() }}
+        run: cp test/spec.json report/spec.json
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-tests
+          path: report/
+          if-no-files-found: error
 
   people:
     runs-on: ubuntu-latest

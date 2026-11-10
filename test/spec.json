@@ -1,0 +1,299 @@
+{
+  "about": "Pretend hospitals with made-up patients, which an app or a test signs in to and pulls records from with no account and no network.",
+  "capabilities": [
+    "Signing a patient in to a demo hospital · demoHospital()",
+    "Reading a patient's records from a demo hospital · demoHospital()",
+    "People to sign in as · loadHospitals(), loadPeople(), loadStories()",
+    "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()",
+    "Making a sign-in or a request fail on purpose · simulate_error",
+    "Signing in from a test · signInAs(), signInThrough(), answerSignIn(), pkcePair()",
+    "Sending an app's requests to the demo hospitals · demoFetch(), isDemoRequest()",
+    "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()",
+    "Starting the demo hospitals from a terminal · npm run serve",
+    "Listing the demo hospitals as a brands bundle · brandsBundle()",
+    "Loading hospitals and people from an app's own folders · loadHospitals(), loadHospital(), loadStories()",
+    "Adding a patient to an app's hospital · addPatient()",
+    "Writing a patient's changes in shorthand · addPatient(), shorthand",
+    "Checking a patient file · demoHospital(), loadHospital(), HospitalDataError",
+    "Exporting a patient's records as a file · exportCollection()"
+  ],
+  "build": [
+    "Making the generated people from Synthea's output · fromSynthea(), medicationRows(), payerNames(), providerDetails()",
+    "The package's people, held to the hospitals' data rules",
+    "Tripwire: the generated people as npm run synthea writes them",
+    "Writing a hospital's answer to a Node response · send()"
+  ],
+  "glossary": [
+    {
+      "term": "aud",
+      "definition": "the parameter of an authorize request in which the app names the FHIR base it means to read from; a hospital refuses one that is not its own."
+    },
+    {
+      "term": "authorization code",
+      "definition": "the one-time code that arrives at the redirect URI from a sign-in, which the app trades for the token.",
+      "aliases": ["authorization codes"]
+    },
+    {
+      "term": "brands bundle",
+      "definition": "the list of the hospitals that use a vendor's system, as the vendor publishes it in SMART's User-access Brands format: a FHIR Bundle of Organizations, each pointing to the endpoint its records are served from.",
+      "vocabulary": "https://hl7.org/fhir/smart-app-launch/brands.html",
+      "aliases": ["brands bundles"]
+    },
+    {
+      "term": "Bundle",
+      "definition": "FHIR's resource that holds a list of other resources, each in an `entry`; its `type` says what the list is, such as `collection`, `history` or `searchset`.",
+      "aliases": ["Bundles"]
+    },
+    {
+      "term": "C-CDA",
+      "definition": "Consolidated Clinical Document Architecture: HL7's standard for the XML summary documents patient portals hand out."
+    },
+    {
+      "term": "client id",
+      "definition": "the name an app gives for itself when it asks to sign a patient in; a demo hospital accepts any.",
+      "aliases": ["client ids"]
+    },
+    {
+      "term": "clinical date",
+      "definition": "the date a record gives for the thing it records, such as a result's `effectiveDateTime` or a condition's `onsetDateTime`.",
+      "aliases": ["clinical dates"]
+    },
+    {
+      "term": "code system",
+      "definition": "a published list of codes for one kind of thing, such as RxNorm for medicines, LOINC for lab tests and SNOMED CT for clinical findings.",
+      "aliases": ["code systems"]
+    },
+    {
+      "term": "deletion",
+      "definition": "an entry of a record's history that says the hospital removed the record at that time; it carries no resource.",
+      "aliases": ["deletions", "deleted"]
+    },
+    {
+      "term": "demo hospital",
+      "definition": "a pretend hospital with made-up patients, which an app or a test signs in to and pulls from with no account and no network; Cascade North and Cascade South are the two this package carries.",
+      "aliases": ["demo hospitals"]
+    },
+    {
+      "term": "difference",
+      "definition": "a place where one hospital's record of a person disagrees with who the person is, such as a misspelt name, which the person's `person.json` declares so that the load accepts it.",
+      "aliases": ["differences", "declared difference"]
+    },
+    {
+      "term": "discovery",
+      "definition": "the request for a hospital's SMART configuration, with which every sign-in begins."
+    },
+    {
+      "term": "Endpoint",
+      "definition": "FHIR's resource for an address a system is reached at; in a brands bundle, a hospital's FHIR base.",
+      "aliases": ["Endpoints"]
+    },
+    {
+      "term": "etag",
+      "definition": "the version stamp of a history entry, written `W/\"<version id>\"`.",
+      "aliases": ["etags"]
+    },
+    {
+      "term": "FHIR",
+      "definition": "Fast Healthcare Interoperability Resources: HL7's standard for health records as JSON.",
+      "vocabulary": "https://hl7.org/fhir/R4/"
+    },
+    {
+      "term": "FHIR base",
+      "definition": "the URL of a hospital's FHIR server; each record there is at `<FHIR base>/<type>/<id>`.",
+      "vocabulary": "https://ns.cascadeprotocol.org/cascade#serverBaseUrl",
+      "aliases": ["FHIR bases"]
+    },
+    {
+      "term": "Forwarded",
+      "definition": "the HTTP header in which a go-between says which host and protocol the client asked for; `demoRemapFetch()` sends it to the listener."
+    },
+    {
+      "term": "generated people",
+      "definition": "the people this package made with Synthea: ten years of visits, conditions, medications and results each.",
+      "aliases": ["generated person", "generated patient"]
+    },
+    {
+      "term": "hand-written people",
+      "definition": "the people written by hand for tests, which this package copies from cascade-vocabulary and does not edit."
+    },
+    {
+      "term": "history",
+      "definition": "every version of one record, newest first, as a hospital answers `<type>/<id>/_history`; also the type of a patient file that holds one entry for each version.",
+      "aliases": ["histories"]
+    },
+    {
+      "term": "Host",
+      "definition": "the HTTP header in which a client says which server name it asked for."
+    },
+    {
+      "term": "instant",
+      "definition": "a date and time to the second with its time zone, such as `2024-02-01T00:00:00Z`.",
+      "aliases": ["instants"]
+    },
+    {
+      "term": "kit",
+      "definition": "a story and the exports it uses, which the vocabulary carries for testing, such as `alex-rivera`.",
+      "aliases": ["kits"]
+    },
+    {
+      "term": "launcher",
+      "definition": "the SMART Health IT launcher, `launch.smarthealthit.org`: a public test hospital on the internet, kept by the SMART project, which this project did not write. Its code is smart-launcher-v2."
+    },
+    {
+      "term": "listener",
+      "definition": "the demo hospitals served on a port of this machine by `serveDemo()` or `npm run serve`, each at `<origin>/<id>/fhir`.",
+      "aliases": ["listeners"]
+    },
+    {
+      "term": "metadata",
+      "definition": "`<FHIR base>/metadata`, where a FHIR server says what it supports: the types it serves, how each is searched, and where its sign-in is."
+    },
+    {
+      "term": "official name",
+      "definition": "the name of a Patient marked `use: \"official\"`, or its only name."
+    },
+    {
+      "term": "OperationOutcome",
+      "definition": "FHIR's resource for a server's warning or error message; it is no record of the patient."
+    },
+    {
+      "term": "Organization",
+      "definition": "FHIR's resource for a hospital, a clinic, a laboratory or another body that gives care.",
+      "vocabulary": "https://ns.cascadeprotocol.org/cascade#Organization",
+      "aliases": ["Organizations"]
+    },
+    {
+      "term": "origin",
+      "definition": "the scheme, server name and port of a URL, such as `https://hospital.example`: what a browser treats as one site.",
+      "aliases": ["origins"]
+    },
+    {
+      "term": "patient",
+      "definition": "a person as one hospital knows them, under that hospital's own patient id.",
+      "aliases": ["patients"]
+    },
+    {
+      "term": "patient file",
+      "definition": "the file of what one hospital holds of one person, `people/<person>/sources/<hospital>/fhir.json`: a FHIR Bundle of type `collection` or `history`.",
+      "aliases": ["patient files"]
+    },
+    {
+      "term": "person",
+      "definition": "a made-up human being, with a name, a birth date and a gender in `person.json`, who is a patient at one hospital or more.",
+      "aliases": ["people"]
+    },
+    {
+      "term": "PKCE",
+      "definition": "Proof Key for Code Exchange, RFC 7636: the part of a sign-in by which an app shows, at the token exchange, that it is the app that began the sign-in. A demo hospital takes only its S256 method."
+    },
+    {
+      "term": "plain record",
+      "definition": "a record written once in a `collection` file, with no version: it is there at every date and is served as written.",
+      "aliases": ["plain records", "plain collection"]
+    },
+    {
+      "term": "preflight",
+      "definition": "the OPTIONS request a browser sends before a page on one origin calls a server on another, to ask whether it may."
+    },
+    {
+      "term": "pull",
+      "definition": "the records one patient has at one hospital, fetched in one go: a search of each type, page by page, and a read of the Patient.",
+      "aliases": ["pulls", "pulled"]
+    },
+    {
+      "term": "record",
+      "definition": "one thing said about a person's health, such as an allergy, a medication or a lab result.",
+      "vocabulary": "https://ns.cascadeprotocol.org/cascade#Record",
+      "aliases": ["records"]
+    },
+    {
+      "term": "record time",
+      "definition": "when a hospital recorded a version, the entry's `response.lastModified`.",
+      "aliases": ["record times"]
+    },
+    {
+      "term": "redirect URI",
+      "definition": "the app's own URL to which a hospital sends the person's browser when the sign-in is over.",
+      "aliases": ["redirect URIs"]
+    },
+    {
+      "term": "reference tables",
+      "definition": "public code lists, such as RxNorm for medicines, that tell an app when two codes mean one thing; the hand-written people carry codes chosen to reach them.",
+      "aliases": ["reference table"]
+    },
+    {
+      "term": "resource",
+      "definition": "one record in FHIR, named by its type and its id, such as `Observation/ldl-1`.",
+      "aliases": ["resources"]
+    },
+    {
+      "term": "root",
+      "definition": "a folder of hospital folders or of person folders that a load reads; a load takes a list of them.",
+      "aliases": ["roots"]
+    },
+    {
+      "term": "scope",
+      "definition": "what an app asks to be let read, in SMART's notation: `patient/Observation.rs` is to read and search the patient's Observations.",
+      "aliases": ["scopes"]
+    },
+    {
+      "term": "searchset",
+      "definition": "the type of Bundle a hospital answers a search with: one page of matches and, where there are more, a link to the next."
+    },
+    {
+      "term": "shorthand",
+      "definition": "a way to write a record's change in a patient file as two dates, `active` and `stopped`, in place of two versions."
+    },
+    {
+      "term": "sign-in page",
+      "definition": "the page a hospital shows at its authorize address, where the patient is picked and allows or cancels what the app asks.",
+      "aliases": ["sign-in pages"]
+    },
+    {
+      "term": "SMART configuration",
+      "definition": "what a hospital's server publishes at `<FHIR base>/.well-known/smart-configuration`: where its sign-in page and its token exchange are, and what they support."
+    },
+    {
+      "term": "SMART on FHIR",
+      "definition": "the standard by which an app signs a person in to a hospital and is then let read that person's records: OAuth 2.0 as HL7's SMART App Launch profiles it for FHIR servers.",
+      "vocabulary": "https://hl7.org/fhir/smart-app-launch/"
+    },
+    {
+      "term": "source",
+      "definition": "what one hospital holds of one person: the folder `sources/<hospital>/` of the person, with a patient file, C-CDA documents, or both.",
+      "aliases": ["sources"]
+    },
+    {
+      "term": "state",
+      "definition": "a value the app sends with the authorize request and the hospital sends back unchanged, so the app can tell its own sign-in's answer."
+    },
+    {
+      "term": "story",
+      "definition": "a made-up patient at a demo hospital whose records were written to show one outcome, such as a lab result that falls after a medication starts, with that outcome written down beside them.",
+      "aliases": ["stories"]
+    },
+    {
+      "term": "Synthea",
+      "definition": "an open-source program that makes up whole patient histories; the generated people came from it."
+    },
+    {
+      "term": "token",
+      "definition": "the access token a hospital issues when a person signs in: the key an app sends with each request for that person's records.",
+      "aliases": ["tokens", "access token"]
+    },
+    {
+      "term": "token exchange",
+      "definition": "the request in which an app trades the authorization code for the token."
+    },
+    {
+      "term": "version",
+      "definition": "what a record says at one time; when a hospital changes a record, its history keeps the old version and adds a new one.",
+      "aliases": ["versions"]
+    },
+    {
+      "term": "world's date",
+      "definition": "the date a hospital answers for, an instant given as `asOf`: it serves each record as it stood then. With none, it serves each record's latest version.",
+      "aliases": ["world date"]
+    }
+  ]
+}

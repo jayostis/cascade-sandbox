@@ -3,3 +3,5 @@ build/
 dist/
 *.tsbuildinfo
 .rows-cache/
+report/
+.runtime-js/
