@@ -56,50 +56,20 @@ export interface SignedIn {
 export interface SignInOptions {
   /** The scope the client asks for; the default is a patient launch that reads everything. */
   scope?: string;
-  /** The protocol clock of the hospital built to sign in; not allowed when signing in through a `fetch`. */
+  /** The protocol clock of the hospital built to sign in. */
   now?: () => Date;
 }
 
 /**
- * Signs in as `patient` the way a client does: the hospital's discovery, its sign-in form posted with the patient
- * allowed, and the code exchanged with a fresh PKCE pair. Given a hospital's options it builds the hospital and
- * returns it beside the token; given a `fetch` and the hospital's `base`, it signs in through that.
+ * Signs in as `patient` the way a client does through a hospital reached at `base` by `fetch`: its discovery, its
+ * sign-in form posted with the patient allowed, and the code exchanged with a fresh PKCE pair.
  */
-export async function signInAs(
-  hospital: DemoHospitalOptions,
+export async function signInThrough(
+  fetch: typeof globalThis.fetch,
+  base: string,
   patient: string,
-  options?: SignInOptions,
-): Promise<SignedIn & { hospital: DemoHospital }>;
-export async function signInAs(
-  through: { fetch: typeof globalThis.fetch; base: string },
-  patient: string,
-  options?: Pick<SignInOptions, "scope">,
-): Promise<SignedIn>;
-export async function signInAs(
-  target:
-    DemoHospitalOptions | { fetch: typeof globalThis.fetch; base: string },
-  patient: string,
-  options: SignInOptions = {},
-): Promise<SignedIn & { hospital?: DemoHospital }> {
-  let hospital: DemoHospital | undefined;
-  let fetch: typeof globalThis.fetch;
-  let base: string;
-  if ("fetch" in target) {
-    if (options.now !== undefined)
-      throw new TypeError(
-        "now is the clock of a hospital that signInAs builds",
-      );
-    ({ fetch, base } = target);
-  } else {
-    const built = demoHospital({
-      ...target,
-      ...(options.now === undefined ? {} : { now: options.now }),
-    });
-    hospital = built;
-    fetch = (input, init) => built(new Request(input, init));
-    base = target.hospital.fhirBase.replace(/\/$/, "");
-  }
-
+  options: Pick<SignInOptions, "scope"> = {},
+): Promise<SignedIn> {
   const { verifier, challenge } = pkcePair();
   const discovery = await (
     await fetch(`${base}/.well-known/smart-configuration`)
@@ -133,9 +103,27 @@ export async function signInAs(
   ).json();
   if (typeof answer.access_token !== "string")
     throw new Error(`${base} did not give ${patient} a token`);
-  return {
-    token: answer.access_token,
-    code,
-    ...(hospital === undefined ? {} : { hospital }),
-  };
+  return { token: answer.access_token, code };
+}
+
+/**
+ * Builds the hospital from its options, with `options.now` as its clock, and signs in as `patient` through it with
+ * `signInThrough`; returns the hospital beside the token.
+ */
+export async function signInAs(
+  hospital: DemoHospitalOptions,
+  patient: string,
+  options: SignInOptions = {},
+): Promise<SignedIn & { hospital: DemoHospital }> {
+  const built = demoHospital({
+    ...hospital,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+  const signedIn = await signInThrough(
+    (input, init) => built(new Request(input, init)),
+    hospital.hospital.fhirBase.replace(/\/$/, ""),
+    patient,
+    options.scope === undefined ? {} : { scope: options.scope },
+  );
+  return { ...signedIn, hospital: built };
 }

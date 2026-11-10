@@ -12,7 +12,7 @@ import {
   serveDemo,
 } from "../src/node/index.js";
 import { send } from "../src/node/serve.js";
-import { pkcePair, signInAs } from "../src/testing.js";
+import { pkcePair, signInThrough } from "../src/testing.js";
 
 const REDIRECT = "https://app.example/callback";
 
@@ -50,7 +50,7 @@ async function signIn(
   patient = PATIENT,
   base = BASE,
 ) {
-  return (await signInAs({ fetch, base }, patient)).token;
+  return (await signInThrough(fetch, base, patient)).token;
 }
 
 async function pullObservations(fetch: typeof globalThis.fetch, base = BASE) {
