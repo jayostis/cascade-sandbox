@@ -630,7 +630,7 @@ describe("Serving the demo hospitals at a real address · serveDemo(), demoRemap
       }
     });
 
-    it("never allows credentials", async () => {
+    it("sends no `Access-Control-Allow-Credentials` on any answer", async () => {
       const every = [
         ...READS,
         TOKEN,
