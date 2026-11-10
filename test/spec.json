@@ -278,8 +278,16 @@
     },
     {
       "term": "token",
-      "definition": "the access token a hospital issues when a person signs in: the key an app sends with each request for that person's records.",
+      "definition": "the access token a hospital issues when a person signs in: the credential an app sends with each request for that person's records.",
       "aliases": ["tokens", "access token"]
+    },
+    {
+      "term": "key",
+      "definition": "the secret a hospital signs its tokens with (`hospital.json`'s `key`)."
+    },
+    {
+      "term": "invalid_client",
+      "definition": "OAuth's error for a client the server does not accept; the token exchange answers 401 with it. The launcher's switch for it is named `token_invalid_token`, which differs from the error it gives."
     },
     {
       "term": "token exchange",
