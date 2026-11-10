@@ -57,8 +57,8 @@ read 2026-10-16. Query scopes ("add a query string suffix to existing scopes, st
 a server and are partly "experimental"; granting nothing for them refuses rather than over-shares. The hospital
 serves only patients, so `user/` and `system/` scopes have nothing to grant.
 
-Pinned by `history.test.ts`, "the hospital's scopes grant what SMART says each grants", and the scope rows of
-`hospital.test.ts`, "each bad request is refused as the protocol says".
+Pinned by `hospital.test.ts`, "Reading a patient's records from a demo hospital · demoHospital()" › given a token's scopes: the three leaves that serve under a scope and the
+three that answer 403.
 
 ## Not yours is not there
 
@@ -70,8 +70,8 @@ same body. A search naming another patient is a 403 whether that patient exists 
 
 FHIR R4, Security, [Access Denied Response Handling](https://hl7.org/fhir/R4/security.html), read 2026-10-16.
 
-Pinned by `history.test.ts` ("another patient's … answers as an unknown one") and the rows "another patient's record",
-"another patient's version" and "another patient's history" of `hospital.test.ts`.
+Pinned by `hospital.test.ts`, "Reading a patient's records from a demo hospital · demoHospital()" › when a request is refused: "answers 404 `not-found` for another patient's
+record", "… for a version of another patient's record" and "… for the history of another patient's record".
 
 ## 410 for a deleted record
 
@@ -101,7 +101,8 @@ strings", [RFC 7519 §4.1.3](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.
 imaging one, which name each service a token is good for. It was not adopted: the authorize parameter is one URL, and
 this hospital's tokens are opaque signed notes with no `aud` claim.
 
-Pinned by `hospital.test.ts`, row "a wrong aud".
+Pinned by `hospital.test.ts`, "Signing a patient in to a demo hospital · demoHospital()" › when the authorize request is wrong › "redirects with `invalid_request` for an
+`aud` that is another hospital's FHIR base".
 
 ## Plain records are served as written
 
@@ -118,7 +119,8 @@ does not make, and a later edit of a hand-written file would keep the same `"1"`
 miss it.
 
 Pinned by `cascade-runtime`'s `connect.test.ts` (every pulled resource deep-equals the file's) and
-`hospital.test.ts`, "a client walks the whole protocol for patient A at North".
+`hospital.test.ts`, "Reading a patient's records from a demo hospital · demoHospital()" › when a client searches a patient's records › "returns every record of the patient across
+its searches and the read of the Patient".
 
 ## History is newest first
 
@@ -175,8 +177,7 @@ Also ours: the 401 carries `WWW-Authenticate: Bearer error="invalid_token"` (RFC
 `error_description="The access token expired"` for the expired switch, so a client can tell the two apart without
 reading prose; and the body is an OperationOutcome, as every FHIR error here is, not the launcher's plain text.
 
-Pinned by `hospital.test.ts`, "each error switch fails at its own step, as smart-launcher-v2 does, and an unknown one is
-refused".
+Pinned by `hospital.test.ts`, every leaf of "Making a sign-in or a request fail on purpose · simulate_error".
 
 ## A direct caller gets the hospital at the base it asked
 

@@ -5,3 +5,4 @@ dist/
 .rows-cache/
 report/
 .runtime-js/
+dist-*/
