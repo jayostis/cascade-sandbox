@@ -22,8 +22,7 @@ FHIR R4, RESTful API, [read, vread and history](https://hl7.org/fhir/R4/http.htm
 has no parameter for reading a server as of a date; T is the world's date of a pretend hospital, the time of its story
 at which an app connects, and every answer is the one a real server would have given then.
 
-Pinned by `history.test.ts`, "the hospital answers each read, search, vread and history with its records as they stood
-at T".
+Pinned by `history.test.ts`, every leaf of "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()".
 
 ## The three clocks
 
@@ -37,7 +36,8 @@ Three times are in play, and "as of" names only the first.
 
 "As of" is never clinical time: a record dated before T is still absent at T when the source recorded it after T.
 
-Pinned by `history.test.ts`, "a patient's export is a collection of each record's version at T".
+Pinned by `export.test.ts`, "Exporting a patient's records as a file · exportCollection()" › exportCollection(hospital, patient, asOf) › "returns each record's version
+current at `asOf`, a deleted record left out".
 
 ## Scopes
 
@@ -85,7 +85,8 @@ The patient's own record deleted at T answers a read with 410 `deleted`; a vread
 FHIR R4, RESTful API, [read](https://hl7.org/fhir/R4/http.html#read) and [vread](https://hl7.org/fhir/R4/http.html#vread),
 read 2026-10-16.
 
-Pinned by `history.test.ts`, rows "a record deleted at T" and "a vread of a deletion".
+Pinned by `history.test.ts`, "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()" › when a record is read › "answers 410 for a record deleted by the date", and
+› when one version is read › "answers 410 for the version that is a deletion".
 
 ## `aud` is one URL
 
@@ -132,8 +133,9 @@ deletion as an entry with `request.method` `DELETE` and no `resource`. Type-leve
 
 FHIR R4, RESTful API, [history](https://hl7.org/fhir/R4/http.html#history), read 2026-10-16.
 
-Pinned by `history.test.ts`, rows "a history, newest first", "a history holding a deletion", "a type's history" and
-"the system's history".
+Pinned by `history.test.ts`, "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()" › when a record's history is read: "lists the record's versions newest first",
+"lists a deletion as an entry with no resource", "answers 404 `not-supported` for a type's history, saying how a history
+is read" and "… for the whole hospital's history".
 
 ## `_at` at the value's precision
 
@@ -146,8 +148,9 @@ day (UTC); an instant during that second. A version is current from its record t
 FHIR R4, Search, [date](https://hl7.org/fhir/R4/search.html#date), read 2026-10-16; `_at` refers to it for date
 handling. `_since` is an instant, and one with no timezone is a 400 `invalid`.
 
-Pinned by `history.test.ts`, rows "a history at a year in which both versions were current", "a history at a year
-before the change", "a history at a day after the change" and "a history since a time with no timezone".
+Pinned by `history.test.ts`, "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()" › with `_at`: "returns every version current at some time in a year", "returns the
+one version current through a year before the change" and "returns the version current on a day"; › with `_since`:
+"answers 400 for a value that is not an instant".
 
 ## Error switches follow smart-launcher-v2
 
