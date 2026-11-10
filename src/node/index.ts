@@ -363,4 +363,4 @@ export async function addPatient(
 }
 
 export { exportCollection } from "../export.js";
-export * from "./serve.js";
+export { serveDemo, type DemoListener } from "./serve.js";
