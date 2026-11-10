@@ -210,9 +210,8 @@ also conveyed in a server's CapabilityStatement" in earlier versions and that "t
 extension is kept for clients and test kits written against SMART 1.0, and `.well-known/smart-configuration` stays the
 source.
 
-Pinned by `serve.test.ts`, "a caller with only the listener's address discovers, signs in, searches and pages, every
-link at the listener", "a direct sign-in takes the base it came to as aud, and refuses the hospital's own" and "a direct
-caller gets the hospital at the host it asked".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when a caller has only the listener's address (its six leaves), and › when the
+listener is asked by another name: "answers at `localhost`, naming it as the issuer".
 
 ## The listener answers only the names it was given
 
@@ -233,8 +232,7 @@ rebinding and other Host header attacks") and Django with
 [`ALLOWED_HOSTS`](https://docs.djangoproject.com/en/5.2/ref/settings/). `host.docker.internal` is allowed with no option
 because I1's Inferno reaches the listener from a container under that name; the CLI prints each base at it.
 
-Pinned by `serve.test.ts`, "a request the listener cannot place, or whose Host it does not answer, is refused, each for
-its reason".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when the listener is asked by another name and › when a request cannot be placed.
 
 ## The world's date is moved only by a caller that is not a page on another site
 
@@ -251,8 +249,9 @@ Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery
 2026-10-17, which also gives verifying `Origin` against the target's origin; [Fetch
 Metadata](https://www.w3.org/TR/fetch-metadata/) defines the header.
 
-Pinned by `serve.test.ts`, "a POST to the listener's world-date moves the world's date for the next answer, and refuses
-what is not an instant or comes from another site".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when the world's date is moved: "answers the next request as of the date posted to
+`/world-date`", "answers 400 for an `asOf` that is not an instant, leaving the date" and "answers 403 for a post from a
+page on another site, leaving the date".
 
 ## A browser app may call discovery, the token endpoint and the API from any origin
 
@@ -276,5 +275,4 @@ documented there. `Pragma: no-cache` is [RFC 6749 §5.1](https://www.rfc-editor.
 token response for `Cache-Control: no-store` and `Pragma: no-cache`. I1's Inferno run found the missing headers
 (`epic-people/i1-inferno.md`).
 
-Pinned by `serve.test.ts`, "a browser app may read discovery, the token endpoint and the API from any origin, and the sign-in
-page and world-date from none".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when a page on another origin asks (its six leaves).
