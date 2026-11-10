@@ -254,7 +254,7 @@ describe("Signing a patient in to a demo hospital · demoHospital()", () => {
       });
     });
 
-    it("rejects a request when the hospital's `key` is empty", async () => {
+    it("throws when a request is answered by a hospital whose `key`, the secret its tokens are signed with, is empty", async () => {
       const { token } = await signIn(north, A_NORTH);
       const keyless = demoHospital({
         ...north,
@@ -262,6 +262,7 @@ describe("Signing a patient in to a demo hospital · demoHospital()", () => {
       });
       await assert.rejects(
         get(keyless, `${NORTH}/Condition?patient=${A_NORTH}`, token),
+        { name: "DataError" },
       );
     });
   });
@@ -392,7 +393,7 @@ describe("Signing a patient in to a demo hospital · demoHospital()", () => {
       assert.ok(!unscoped.includes("If you allow it"));
     });
 
-    it("requires a patient to be picked before Allow", () => {
+    it("marks each patient choice `required`", () => {
       const radios = plain.match(/<input [^>]*name="patient"[^>]*>/g) ?? [];
       assert.ok(
         radios.length > 0 &&
@@ -401,7 +402,7 @@ describe("Signing a patient in to a demo hospital · demoHospital()", () => {
       );
     });
 
-    it("lets Cancel through with no patient picked", () => {
+    it("marks Cancel `formnovalidate`", () => {
       assert.match(plain, /<button [^>]*value="cancel" formnovalidate>/);
     });
 
@@ -1126,7 +1127,7 @@ describe("Making a sign-in or a request fail on purpose · simulate_error", () =
   });
 
   describe("with `simulate_error` on a later request", () => {
-    it("ignores one posted to the token exchange", async () => {
+    it("ignores a `simulate_error` posted to the token exchange", async () => {
       const hospital = demoHospital(north);
       const posted = await exchange(
         hospital,
@@ -1138,7 +1139,7 @@ describe("Making a sign-in or a request fail on purpose · simulate_error", () =
       assert.equal(posted.status, 200);
     });
 
-    it("ignores one in a record request's query", async () => {
+    it("ignores a `simulate_error` in a record request's query", async () => {
       const hospital = demoHospital(north);
       const { access_token: token } = await (
         await exchange(hospital, NORTH, tokenForm(await codeFor(hospital, "")))
@@ -1247,8 +1248,12 @@ describe("Signing in from a test · signInAs(), signInThrough(), answerSignIn(),
     });
   });
 
+  /**
+   * `signInAs()` builds the hospital for you; `signInThrough()` signs in to one you reach by `fetch` and `base` (its
+   * FHIR base).
+   */
   describe("signInThrough(fetch, base, patient)", () => {
-    it("returns a token signed in for through the `fetch`", async () => {
+    it("returns the token and the code of a sign-in made through the `fetch` given", async () => {
       const hospital = demoHospital(north);
       const signed = await signInThrough(through(hospital), NORTH, B_NORTH);
       assert.ok(signed.code.length > 0);
