@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { before, describe, it } from "node:test";
 import type { Bundle, Hospital, Resource } from "../src/index.js";
 import {
   type MedicationRow,
@@ -288,264 +288,402 @@ function versionsIn(file: PatientFile) {
       });
 }
 
-test("a Synthea person becomes each hospital's own patient, trimmed and renamed", () => {
-  const files = fromSynthea(bundle, [NORTH, SOUTH], rows, PAYERS);
-  const [north, south] = files.map((file) =>
-    (file.bundle.entry ?? []).map((entry) => entry.resource),
-  ) as [Resource[], Resource[]];
-  const of = (records: Resource[], type: string) =>
-    records.filter((record) => record.resourceType === type);
+const ofType = (records: Resource[], type: string) =>
+  records.filter((record) => record.resourceType === type);
 
-  for (const file of files) {
-    assert.equal(file.bundle.type, "history");
-  }
-  for (const records of [north, south]) {
-    assert.deepEqual(of(records, "Claim"), []);
-    const text = JSON.stringify(records);
-    assert.ok(!text.includes("urn:uuid:") && !text.includes(REAL));
-    assert.ok(!text.includes("synthetichealth.github.io"));
-    const names = new Set(records.map((r) => `${r.resourceType}/${r.id}`));
-    for (const match of text.matchAll(/"reference":"([^"]+)"/g)) {
-      assert.ok(names.has(match[1]!), match[1]);
-    }
-  }
-  assert.equal(new Set(of(north, "Encounter").map((e) => e.id)).size, 3);
-  assert.equal(of(south, "Encounter").length, 2);
-  assert.equal(of(north, "Observation").length, 0);
-  assert.deepEqual(
-    of(north, "DiagnosticReport").map((report) => [
-      report.performer,
-      text((report.presentedForm as unknown[])[0]),
-    ]),
-    [[[{ type: "Practitioner", display: "Dr. Kim Ito" }], CLEANED]],
-  );
-  assert.deepEqual(
-    of(south, "DiagnosticReport").map((report) => report.result),
-    [[{ reference: `Observation/${of(south, "Observation")[0]!.id}` }]],
-  );
-  const [note, ...others] = of(south, "DocumentReference");
-  assert.deepEqual(others, []);
-  assert.equal(note!.status, "current");
-  assert.deepEqual(note!.custodian, { display: SOUTH.hospital.name });
-  assert.equal(
-    text((note!.content as { attachment: unknown }[])[0]!.attachment),
-    CLEANED,
-  );
-  assert.deepEqual(of(north, "DocumentReference"), []);
-  assert.equal(of(north, "Procedure").length, 1);
-  assert.equal(of(south, "Procedure").length, 0);
-  assert.deepEqual(
-    of(south, "Observation").map((o) => o.encounter),
-    [{ reference: `Encounter/${of(south, "Encounter")[0]!.id}` }],
-  );
-  const [northHtn] = of(north, "Condition");
-  const [southHtn] = of(south, "Condition");
-  assert.ok(northHtn && southHtn && northHtn.id !== southHtn.id);
-  assert.equal(southHtn.encounter, undefined);
-  assert.deepEqual(of(north, "Encounter")[0]!.serviceProvider, {
-    display: NORTH.hospital.name,
+/** The person's records with one more. */
+const withRecord = (extra: Resource) =>
+  ({
+    ...bundle,
+    entry: [...(bundle.entry ?? []), { resource: extra }],
+  }) as Bundle;
+const THIRD = hospital("cascade-west", "Cascade West Demo Hospital");
+
+/**
+ * `npm run synthea` turns one Synthea person into a patient file for each hospital that holds them: real providers'
+ * names removed, ids made the hospital's own, and each record cut into versions by the dates Synthea gave.
+ */
+describe("Making the generated people from Synthea's output · fromSynthea(), medicationRows(), payerNames(), providerDetails()", () => {
+  let files: PatientFile[];
+  let north: Resource[];
+  let south: Resource[];
+
+  before(() => {
+    files = fromSynthea(bundle, [NORTH, SOUTH], rows, PAYERS);
+    [north, south] = files.map((file) =>
+      (file.bundle.entry ?? []).map((entry) => entry.resource),
+    ) as [Resource[], Resource[]];
   });
-  assert.equal(of(south, "Encounter")[0]!.identifier, undefined);
-  const [patient] = of(south, "Patient");
-  assert.deepEqual(patient!.name, [{ given: ["Ann"], family: "Lee" }]);
-  assert.deepEqual(patient!.extension, [
-    { url: "https://example.org/code", valueCode: "A1" },
-    { url: MAIDEN_NAME, valueString: "Bea Lee" },
-  ]);
-  assert.equal(patient!.id, files[1]!.id);
-  assert.deepEqual(patient!.identifier, [
-    {
-      system: "https://cascade-south.demo.invalid/mrn",
-      value: `SYN-${files[1]!.id.slice(4, 12).toUpperCase()}`,
-    },
-  ]);
-  assert.deepEqual(payerNames([bundle]), ["Humana"]);
-  assert.deepEqual(providerDetails(providers), {
-    names: [REAL, "Unseen Real Clinic"],
-    addresses: ["1 Real Street", "2 Real Avenue"],
-    telecoms: ["555-0100"],
+
+  describe("fromSynthea()", () => {
+    it("returns a `history` file for each hospital", () => {
+      assert.deepEqual(
+        files.map((file) => file.bundle.type),
+        ["history", "history"],
+      );
+    });
+
+    it("drops a record of a type the hospital does not serve", () => {
+      for (const records of [north, south])
+        assert.deepEqual(ofType(records, "Claim"), []);
+      assert.equal(ofType(north, "Procedure").length, 1);
+      assert.equal(ofType(south, "Procedure").length, 0);
+    });
+
+    it("sends the provider with the most visits to the first hospital", () => {
+      assert.equal(
+        new Set(ofType(north, "Encounter").map((e) => e.id)).size,
+        3,
+      );
+      assert.equal(ofType(south, "Encounter").length, 2);
+    });
+
+    it("drops an Observation that is neither a lab result nor a vital sign", () => {
+      assert.equal(ofType(north, "Observation").length, 0);
+      assert.deepEqual(
+        ofType(south, "Observation").map(({ id }) => id),
+        [syntheaId("cascade-south", "lab")],
+      );
+    });
+
+    it("drops a DiagnosticReport with no text whose results are not served there", () => {
+      assert.equal(ofType(north, "DiagnosticReport").length, 1);
+      assert.deepEqual(
+        ofType(south, "DiagnosticReport").map((report) => report.result),
+        [[{ reference: `Observation/${ofType(south, "Observation")[0]!.id}` }]],
+      );
+    });
+
+    it("keeps a report's text, cleaned of the digits in names and of the payer's name", () => {
+      assert.deepEqual(
+        ofType(north, "DiagnosticReport").map((report) => [
+          report.performer,
+          text((report.presentedForm as unknown[])[0]),
+        ]),
+        [[[{ type: "Practitioner", display: "Dr. Kim Ito" }], CLEANED]],
+      );
+    });
+
+    it("keeps a note at the hospital of its visit, as current, with the hospital as custodian", () => {
+      const [note, ...others] = ofType(south, "DocumentReference");
+      assert.deepEqual(others, []);
+      assert.equal(note!.status, "current");
+      assert.deepEqual(note!.custodian, { display: SOUTH.hospital.name });
+      assert.equal(
+        text((note!.content as { attachment: unknown }[])[0]!.attachment),
+        CLEANED,
+      );
+      assert.deepEqual(ofType(north, "DocumentReference"), []);
+    });
+
+    it("rewrites each reference to the hospital's own id for the record", () => {
+      assert.deepEqual(
+        ofType(south, "Observation").map((o) => o.encounter),
+        [{ reference: `Encounter/${ofType(south, "Encounter")[0]!.id}` }],
+      );
+      const [northHtn] = ofType(north, "Condition");
+      const [southHtn] = ofType(south, "Condition");
+      assert.ok(northHtn && southHtn && northHtn.id !== southHtn.id);
+    });
+
+    it("removes a reference to a record the other hospital holds", () => {
+      const [southHtn] = ofType(south, "Condition");
+      assert.equal(southHtn!.encounter, undefined);
+    });
+
+    it("resolves every reference inside the file", () => {
+      for (const records of [north, south]) {
+        const names = new Set(records.map((r) => `${r.resourceType}/${r.id}`));
+        const references = [
+          ...JSON.stringify(records).matchAll(/"reference":"([^"]+)"/g),
+        ];
+        assert.ok(references.length > 0);
+        for (const match of references)
+          assert.ok(names.has(match[1]!), match[1]);
+      }
+    });
+
+    it("leaves no `urn:uuid:`, real provider's name or Synthea URL in a file", () => {
+      for (const records of [north, south]) {
+        const json = JSON.stringify(records);
+        assert.ok(!json.includes("urn:uuid:"));
+        assert.ok(!json.includes(REAL));
+        assert.ok(!json.includes("synthetichealth.github.io"));
+      }
+    });
+
+    it("names the hospital as each visit's provider, with none of Synthea's identifiers", () => {
+      for (const [records, { hospital }] of [
+        [north, NORTH],
+        [south, SOUTH],
+      ] as const)
+        for (const visit of ofType(records, "Encounter")) {
+          assert.deepEqual(visit.serviceProvider, { display: hospital.name });
+          assert.equal(visit.identifier, undefined);
+        }
+    });
+
+    it("strips the digits from the Patient's names, and removes Synthea's own extensions", () => {
+      const [patient] = ofType(south, "Patient");
+      assert.deepEqual(patient!.name, [{ given: ["Ann"], family: "Lee" }]);
+      assert.deepEqual(patient!.extension, [
+        { url: "https://example.org/code", valueCode: "A1" },
+        { url: MAIDEN_NAME, valueString: "Bea Lee" },
+      ]);
+    });
+
+    it("gives the Patient the hospital's own id and medical record number", () => {
+      const [patient] = ofType(south, "Patient");
+      const [northPatient] = ofType(north, "Patient");
+      assert.equal(patient!.id, files[1]!.id);
+      const identifier = patient!.identifier as {
+        system: string;
+        value: string;
+      }[];
+      assert.equal(identifier.length, 1);
+      assert.equal(
+        identifier[0]!.system,
+        "https://cascade-south.demo.invalid/mrn",
+      );
+      assert.match(identifier[0]!.value, /^SYN-[0-9A-F]{8}$/);
+      assert.notEqual(
+        identifier[0]!.value,
+        (northPatient!.identifier as { value: string }[])[0]!.value,
+      );
+    });
+
+    it("gives the Patient one version, at the earliest record time of its file", () => {
+      const patientTimes = files.map((file) => {
+        const entries = file.bundle.entry ?? [];
+        const patients = entries.filter(
+          (entry) => entry.resource?.resourceType === "Patient",
+        );
+        assert.equal(patients.length, 1);
+        const earliest = Math.min(
+          ...entries.map((entry) => Date.parse(entry.response!.lastModified!)),
+        );
+        assert.equal(
+          Date.parse(patients[0]!.response!.lastModified!),
+          earliest,
+        );
+        return patients[0]!.response!.lastModified;
+      });
+      assert.deepEqual(patientTimes, [
+        instant("2019-05-01T00:00:00Z"),
+        instant("2022-03-01T10:00:00Z"),
+      ]);
+    });
   });
-});
 
-test("a record is first held when its final content first holds, and a later change is a second version", () => {
-  const [northFile, southFile] = fromSynthea(
-    bundle,
-    [NORTH, SOUTH],
-    rows,
-    PAYERS,
-  );
-  const north = versionsIn(northFile!);
-  const south = versionsIn(southFile!);
+  describe("when a record changes after it is first held", () => {
+    let atNorth: ReturnType<typeof versionsIn>;
+    let atSouth: ReturnType<typeof versionsIn>;
 
-  const stopped = north("stopped");
-  assert.deepEqual(
-    stopped.map((v) => [v.at, v.status, v.versionId, v.method, v.etag]),
-    [
-      [instant("2020-01-01T10:00:00Z"), "active", "1", "POST", 'W/"1"'],
-      [instant("2020-03-01T00:00:00Z"), "completed", "2", "PUT", 'W/"2"'],
-    ],
-  );
-  assert.equal(stopped[0]!.url, "MedicationRequest");
-  assert.equal(
-    stopped[1]!.url,
-    `MedicationRequest/${syntheaId("cascade-north", "stopped")}`,
-  );
-  assert.deepEqual(
-    north("once").map((v) => [v.at, v.status]),
-    [[instant("2020-01-01T10:15:00Z"), "completed"]],
-    "an order stopped at its start has one version, as written",
-  );
-  assert.deepEqual(
-    north("renewed").map((v) => [v.at, v.status]),
-    [
-      [instant("2020-01-01T10:00:00Z"), "active"],
-      [instant("2020-07-01T00:00:00Z"), "completed"],
-    ],
-    "a renewal before the stop in medications.csv ends the order",
-  );
-  assert.deepEqual(
-    north("renewal").map((v) => [v.at, v.status]),
-    [[instant("2020-07-01T00:00:00Z"), "active"]],
-  );
+    before(() => {
+      atNorth = versionsIn(files[0]!);
+      atSouth = versionsIn(files[1]!);
+    });
 
-  assert.deepEqual(
-    north("cold").map((v) => [v.at, v.status, v.abated]),
-    [
-      [instant("2020-01-01T10:20:00Z"), "active", false],
-      [instant("2023-01-01T00:00:00Z"), "resolved", true],
-    ],
-  );
-  assert.deepEqual(
-    north("brief").map((v) => [v.at, v.status, v.abated]),
-    [[instant("2020-01-01T10:45:00Z"), "resolved", true]],
-    "a condition abated when it was recorded has one version, as written",
-  );
-  assert.equal(north("htn").length, 1);
+    it("gives a stopped order two versions: active when written, completed at its stop in `medications.csv`", () => {
+      const stopped = atNorth("stopped");
+      assert.deepEqual(
+        stopped.map((v) => [v.at, v.status, v.versionId, v.method, v.etag]),
+        [
+          [instant("2020-01-01T10:00:00Z"), "active", "1", "POST", 'W/"1"'],
+          [instant("2020-03-01T00:00:00Z"), "completed", "2", "PUT", 'W/"2"'],
+        ],
+      );
+      assert.equal(stopped[0]!.url, "MedicationRequest");
+      assert.equal(
+        stopped[1]!.url,
+        `MedicationRequest/${syntheaId("cascade-north", "stopped")}`,
+      );
+    });
 
-  assert.deepEqual(
-    south("cold").map((v) => [v.at, v.status, v.abated]),
-    [
-      [instant("2022-03-01T10:00:00Z"), "active", false],
-      [instant("2023-01-01T00:00:00Z"), "resolved", true],
-    ],
-    "a copy starts at the first visit that finds it active and keeps the stop",
-  );
-  assert.deepEqual(
-    south("late").map((v) => [v.at, v.status]),
-    [
-      [instant("2022-03-01T10:00:00Z"), "active"],
-      [instant("2023-06-01T00:00:00Z"), "completed"],
-    ],
-  );
-  assert.deepEqual(
-    south("htn").map((v) => v.at),
-    [instant("2022-03-01T10:00:00Z")],
-  );
-  assert.deepEqual(
-    north("nuts").map((v) => v.at),
-    [instant("2019-05-01T00:00:00Z")],
-    "an allergy with no encounter is at the first hospital on its own date",
-  );
-  assert.deepEqual(
-    south("nuts").map((v) => v.at),
-    [instant("2022-03-01T10:00:00Z")],
-  );
-  for (const gone of ["flu", "brief", "once", "stopped", "renewed"]) {
-    assert.deepEqual(south(gone), [], `${gone} is active at no visit there`);
-  }
-});
+    it("ends an order at its renewal when that comes before the stop", () => {
+      assert.deepEqual(
+        atNorth("renewed").map((v) => [v.at, v.status]),
+        [
+          [instant("2020-01-01T10:00:00Z"), "active"],
+          [instant("2020-07-01T00:00:00Z"), "completed"],
+        ],
+      );
+    });
 
-test("a Patient has one version, at the earliest record time of its file", () => {
-  const files = fromSynthea(bundle, [NORTH, SOUTH], rows, PAYERS);
-  const patientTimes = files.map((file) => {
-    const entries = file.bundle.entry ?? [];
-    const patients = entries.filter(
-      (entry) => entry.resource?.resourceType === "Patient",
-    );
-    assert.equal(patients.length, 1);
-    const earliest = Math.min(
-      ...entries.map((entry) => Date.parse(entry.response!.lastModified!)),
-    );
-    assert.equal(Date.parse(patients[0]!.response!.lastModified!), earliest);
-    return patients[0]!.response!.lastModified;
+    it("gives an order stopped at its start one version", () => {
+      assert.deepEqual(
+        atNorth("once").map((v) => [v.at, v.status]),
+        [[instant("2020-01-01T10:15:00Z"), "completed"]],
+      );
+    });
+
+    it("gives a condition that abates later two versions", () => {
+      assert.deepEqual(
+        atNorth("cold").map((v) => [v.at, v.status, v.abated]),
+        [
+          [instant("2020-01-01T10:20:00Z"), "active", false],
+          [instant("2023-01-01T00:00:00Z"), "resolved", true],
+        ],
+      );
+    });
+
+    it("gives a condition abated when it was recorded one version", () => {
+      assert.deepEqual(
+        atNorth("brief").map((v) => [v.at, v.status, v.abated]),
+        [[instant("2020-01-01T10:45:00Z"), "resolved", true]],
+      );
+    });
+
+    it("gives a record that never changes one version", () => {
+      assert.deepEqual(
+        atNorth("renewal").map((v) => [v.at, v.status]),
+        [[instant("2020-07-01T00:00:00Z"), "active"]],
+      );
+      assert.equal(atNorth("htn").length, 1);
+    });
+
+    it("starts the second hospital's copy at its first visit that finds the record active", () => {
+      assert.deepEqual(
+        atSouth("cold").map((v) => [v.at, v.status, v.abated]),
+        [
+          [instant("2022-03-01T10:00:00Z"), "active", false],
+          [instant("2023-01-01T00:00:00Z"), "resolved", true],
+        ],
+      );
+      assert.deepEqual(
+        atSouth("late").map((v) => [v.at, v.status]),
+        [
+          [instant("2022-03-01T10:00:00Z"), "active"],
+          [instant("2023-06-01T00:00:00Z"), "completed"],
+        ],
+      );
+      assert.deepEqual(
+        atSouth("htn").map((v) => v.at),
+        [instant("2022-03-01T10:00:00Z")],
+      );
+    });
+
+    it("places an allergy with no visit on its own date at the first hospital", () => {
+      assert.deepEqual(
+        atNorth("nuts").map((v) => v.at),
+        [instant("2019-05-01T00:00:00Z")],
+      );
+      assert.deepEqual(
+        atSouth("nuts").map((v) => v.at),
+        [instant("2022-03-01T10:00:00Z")],
+      );
+    });
+
+    it("leaves out of the second hospital a record no visit there finds active", () => {
+      for (const gone of ["flu", "brief", "once", "stopped", "renewed"])
+        assert.deepEqual(
+          atSouth(gone),
+          [],
+          `${gone} is active at no visit there`,
+        );
+    });
   });
-  assert.deepEqual(patientTimes, [
-    instant("2019-05-01T00:00:00Z"),
-    instant("2022-03-01T10:00:00Z"),
-  ]);
-});
 
-test("medications.csv gives a person's rows by their first six columns", () => {
-  const csv = [
-    "START,STOP,PATIENT,PAYER,ENCOUNTER,CODE,DESCRIPTION,BASE_COST",
-    "2020-01-01T10:00:00Z,2021-01-01T00:00:00Z,p,pay,e1,111,Some Drug 5 MG,1.00",
-    '2020-01-01T10:00:00Z,,q,pay,e9,999,"Other, Drug",2.00',
-    "",
-  ].join("\r\n");
-  assert.deepEqual(medicationRows(csv, "p"), [
-    {
-      start: "2020-01-01T10:00:00Z",
-      stop: "2021-01-01T00:00:00Z",
-      encounter: "e1",
-      code: "111",
-    },
-  ]);
-  assert.throws(() => medicationRows("CODE,START\n", "p"), /does not begin/);
-});
+  describe("medicationRows()", () => {
+    it("returns a person's rows from the first six columns of `medications.csv`", () => {
+      const csv = [
+        "START,STOP,PATIENT,PAYER,ENCOUNTER,CODE,DESCRIPTION,BASE_COST",
+        "2020-01-01T10:00:00Z,2021-01-01T00:00:00Z,p,pay,e1,111,Some Drug 5 MG,1.00",
+        '2020-01-01T10:00:00Z,,q,pay,e9,999,"Other, Drug",2.00',
+        "",
+      ].join("\r\n");
+      assert.deepEqual(medicationRows(csv, "p"), [
+        {
+          start: "2020-01-01T10:00:00Z",
+          stop: "2021-01-01T00:00:00Z",
+          encounter: "e1",
+          code: "111",
+        },
+      ]);
+    });
 
-test("a Synthea person the hospitals cannot hold faithfully is refused", () => {
-  const withRecord = (extra: Resource) =>
-    ({
-      ...bundle,
-      entry: [...(bundle.entry ?? []), { resource: extra }],
-    }) as Bundle;
-  const unknownMedication = withRecord({
-    resourceType: "MedicationRequest",
-    id: "rx",
-    status: "active",
-    authoredOn: "2020-01-01T10:00:00Z",
-    medicationReference: { reference: "urn:uuid:no-such-medication" },
+    it("throws for a file that does not begin with those columns", () => {
+      assert.throws(
+        () => medicationRows("CODE,START\n", "p"),
+        /does not begin/,
+      );
+    });
   });
-  const undatedStop = withRecord(
-    order("no-stop", "completed", "2020-01-01T10:00:00Z", "555") as Resource,
-  );
-  const undatedAbatement = withRecord({
-    ...condition("no-abatement", "2020-01-01T10:00:00Z"),
-    clinicalStatus: { coding: [{ code: "resolved" }] },
-  } as Resource);
-  const undated = withRecord({ resourceType: "Procedure", id: "no-date" });
-  const THIRD = hospital("cascade-west", "Cascade West Demo Hospital");
-  for (const [why, input, hospitals, message] of [
-    ["three hospitals", bundle, [NORTH, SOUTH, THIRD], /at most two hospitals/],
-    [
-      "a Medication not in the bundle",
-      unknownMedication,
-      [NORTH],
-      /MedicationRequest\/rx names a Medication not in the bundle/,
-    ],
-    [
-      "a completed order with no stop in medications.csv",
-      undatedStop,
-      [NORTH, SOUTH],
-      /MedicationRequest\/no-stop is completed, but medications.csv gives it no stop/,
-    ],
-    [
-      "a resolved condition with no abatement",
-      undatedAbatement,
-      [NORTH, SOUTH],
-      /Condition\/no-abatement is resolved, but gives no abatementDateTime/,
-    ],
-    [
-      "a record with no date to be first held at",
-      undated,
-      [NORTH, SOUTH],
-      /Procedure\/no-date has no date to be first recorded at/,
-    ],
-  ] as const) {
-    assert.throws(
-      () => fromSynthea(input, [...hospitals], rows),
-      { message },
-      why,
-    );
-  }
+
+  describe("payerNames()", () => {
+    it("returns each insurer but a public programme", () => {
+      assert.deepEqual(payerNames([bundle]), ["Humana"]);
+    });
+  });
+
+  describe("providerDetails()", () => {
+    it("returns the names of organisations and locations, never a practitioner's", () => {
+      assert.deepEqual(providerDetails(providers).names, [
+        REAL,
+        "Unseen Real Clinic",
+      ]);
+    });
+
+    it("returns each address and phone number once, and no email address", () => {
+      const { addresses, telecoms } = providerDetails(providers);
+      assert.deepEqual(addresses, ["1 Real Street", "2 Real Avenue"]);
+      assert.deepEqual(telecoms, ["555-0100"]);
+    });
+  });
+
+  describe("when a person cannot be held faithfully", () => {
+    for (const [title, input, hospitals, message] of [
+      [
+        "throws for three hospitals",
+        bundle,
+        [NORTH, SOUTH, THIRD],
+        /at most two hospitals/,
+      ],
+      [
+        "throws for a Medication the bundle does not hold",
+        withRecord({
+          resourceType: "MedicationRequest",
+          id: "rx",
+          status: "active",
+          authoredOn: "2020-01-01T10:00:00Z",
+          medicationReference: { reference: "urn:uuid:no-such-medication" },
+        }),
+        [NORTH],
+        /MedicationRequest\/rx names a Medication not in the bundle/,
+      ],
+      [
+        "throws for a completed order with no stop in `medications.csv`",
+        withRecord(
+          order(
+            "no-stop",
+            "completed",
+            "2020-01-01T10:00:00Z",
+            "555",
+          ) as Resource,
+        ),
+        [NORTH, SOUTH],
+        /MedicationRequest\/no-stop is completed, but medications\.csv gives it no stop/,
+      ],
+      [
+        "throws for a resolved condition with no abatement date",
+        withRecord({
+          ...condition("no-abatement", "2020-01-01T10:00:00Z"),
+          clinicalStatus: { coding: [{ code: "resolved" }] },
+        } as Resource),
+        [NORTH, SOUTH],
+        /Condition\/no-abatement is resolved, but gives no abatementDateTime/,
+      ],
+      [
+        "throws for a record with no date to be first held at",
+        withRecord({ resourceType: "Procedure", id: "no-date" }),
+        [NORTH, SOUTH],
+        /Procedure\/no-date has no date to be first recorded at/,
+      ],
+    ] as const)
+      it(title, () => {
+        assert.throws(() => fromSynthea(input, [...hospitals], rows), {
+          message,
+        });
+      });
+  });
 });
