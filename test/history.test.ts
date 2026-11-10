@@ -1,149 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { test } from "node:test";
+import { before, describe, it } from "node:test";
 import {
-  type Bundle,
-  type BundleEntry,
   type DemoHospitalOptions,
   demoHospital,
+  type Hospital,
   HospitalDataError,
-  type Resource,
-  exportCollection,
   recordsAt,
+  type Resource,
+  versionsOf,
 } from "../src/index.js";
-import { historyEntry } from "../src/history.js";
 import { loadHospital } from "../src/node/index.js";
 import { pkcePair, signInAs } from "../src/testing.js";
+import { PATIENTS, T } from "./fixtures.js";
 
-const { hospital } = await loadHospital("cascade-north");
-const BASE = hospital.fhirBase;
-const T = "2024-02-01T00:00:00Z";
-
-function version(
-  resource: Resource,
-  versionId: string,
-  at: string,
-  method?: "POST" | "PUT",
-): BundleEntry {
-  const entry = historyEntry(resource, versionId, at);
-  if (method === undefined || method === entry.request?.method) return entry;
-  const created = method === "POST";
-  return {
-    ...entry,
-    request: {
-      method,
-      url: created
-        ? resource.resourceType
-        : `${resource.resourceType}/${resource.id}`,
-    },
-    response: { ...entry.response!, status: created ? "201" : "200" },
-  };
-}
-
-function deletion(record: string, versionId: string, at: string): BundleEntry {
-  return {
-    request: { method: "DELETE", url: record },
-    response: { status: "204", lastModified: at, etag: `W/"${versionId}"` },
-  };
-}
-
-const history = (...entry: BundleEntry[]): Bundle => ({
-  resourceType: "Bundle",
-  type: "history",
-  entry,
-});
-
-const person = (id: string, family: string): Resource => ({
-  resourceType: "Patient",
-  id,
-  name: [{ family, given: ["Ana"] }],
-});
-const med = (status: string): Resource => ({
-  resourceType: "MedicationStatement",
-  id: "m1",
-  status,
-});
-const obs = (id: string): Resource => ({
-  resourceType: "Observation",
-  id,
-  status: "final",
-});
-
-const PATIENTS: Record<string, Bundle> = {
-  p1: history(
-    version(med("completed"), "2", "2024-04-15T16:00:00Z"),
-    version(person("p1", "Wick"), "1", "2020-01-01T00:00:00Z"),
-    version(med("active"), "1", "2022-03-01T00:00:00Z"),
-    version(obs("o1"), "1", "2023-01-01T00:00:00Z"),
-    version(obs("o2"), "1", "2023-02-01T00:00:00Z"),
-    deletion("Observation/o1", "2", "2024-05-01T00:00:00Z"),
-    version(
-      { resourceType: "Condition", id: "c1", onsetDateTime: "2023-06-01" },
-      "1",
-      "2025-01-01T00:00:00Z",
-    ),
-  ),
-  p2: {
-    resourceType: "Bundle",
-    type: "collection",
-    entry: [
-      { resource: person("p2", "Brook") },
-      { resource: { resourceType: "Condition", id: "c2" } },
-    ],
-  },
-  p3: history(
-    version(person("p3", "Corr"), "1", "2025-01-01T00:00:00Z"),
-    version(obs("o4"), "1", "2023-03-01T00:00:00Z"),
-    deletion("Observation/o4", "2", "2023-04-01T00:00:00Z"),
-    version(obs("o4"), "3", "2023-05-01T00:00:00Z", "POST"),
-  ),
-  p4: history(
-    version(person("p4", "Dale"), "1", "2020-01-01T00:00:00Z"),
-    deletion("Patient/p4", "2", "2023-01-01T00:00:00Z"),
-  ),
-};
-const options = (asOf?: string): DemoHospitalOptions => ({
-  hospital,
-  patients: PATIENTS,
-  ...(asOf === undefined ? {} : { asOf }),
-});
-
+const BEFORE = "2021-01-01T00:00:00Z";
+const AFTER = "2024-06-01T00:00:00Z";
+const CHANGE = "2024-04-15T16:00:00Z";
+const M1 = "MedicationStatement/m1";
+const M1_HISTORY = `${M1}/_history`;
 const REDIRECT = "https://app.example/callback";
-const { challenge } = pkcePair();
-
-const signIn = () =>
-  new URLSearchParams({
-    response_type: "code",
-    client_id: "test-app",
-    redirect_uri: REDIRECT,
-    scope: "launch/patient patient/*.rs",
-    aud: BASE,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-  });
-
-async function tokenFor(
-  patient: string,
-  scope?: string,
-  asOf?: string,
-): Promise<string> {
-  const { token } = await signInAs(options(asOf), patient, {
-    ...(scope === undefined ? {} : { scope }),
-  });
-  return token;
-}
-
-const token = await tokenFor("p1");
-
-function get(asOf: string | undefined, path: string, bearer = token) {
-  return demoHospital(options(asOf))(
-    new Request(`${BASE}/${path}`, {
-      headers: { Authorization: `Bearer ${bearer}` },
-    }),
-  );
-}
 
 type Entry = {
   resource?: Resource & { meta?: { versionId?: string } };
@@ -167,575 +42,432 @@ async function answered(response: Response): Promise<string> {
   return `${response.status} ${of({ resource: body })}`;
 }
 
-test("the hospital answers each read, search, vread and history with its records as they stood at T", async () => {
-  const BEFORE = "2021-01-01T00:00:00Z";
-  const AFTER = "2024-06-01T00:00:00Z";
-  const rows: [string, string | undefined, string, string][] = [
+/** What a row asks: the date the hospital answers for, the path, and what it answers in short. */
+type Example = [asOf: string | undefined, path: string, answer: string];
+type Row = [title: string, ...examples: Example[]];
+
+const NOT_AN_INSTANT = [
+  "2024-02-01",
+  "2024-02-01T00:00:00",
+  "soon",
+  "2024-02-30T00:00:00Z",
+  "0099-02-01T00:00:00Z",
+];
+
+const NOT_AN_INSTANT_REFUSAL = {
+  where: "asOf",
+  reason: "asOf is an instant, as 2024-02-01T00:00:00Z",
+};
+
+const READ: Row[] = [
+  [
+    "answers 404 before the record's first version",
+    [BEFORE, M1, "404 not-found"],
+  ],
+  [
+    "serves the version current on the date",
+    [T, M1, "200 MedicationStatement/m1@1"],
+  ],
+  [
+    "serves a version from the instant it was recorded",
+    [CHANGE, M1, "200 MedicationStatement/m1@2"],
+  ],
+  [
+    "serves the latest version after the record's last change",
+    [AFTER, M1, "200 MedicationStatement/m1@2"],
+  ],
+  [
+    "serves the latest version when no date is given",
+    [undefined, M1, "200 MedicationStatement/m1@2"],
+  ],
+  [
+    "answers 410 for a record deleted by the date",
+    [AFTER, "Observation/o1", "410 deleted"],
+  ],
+];
+
+const SEARCH: Row[] = [
+  [
+    "returns each record's version current on the date",
     [
-      "a record before it was made",
-      BEFORE,
-      "MedicationStatement/m1",
-      "404 not-found",
-    ],
-    [
-      "a record between its versions",
-      T,
-      "MedicationStatement/m1",
-      "200 MedicationStatement/m1@1",
-    ],
-    [
-      "a record at its version's record time",
-      "2024-04-15T16:00:00Z",
-      "MedicationStatement/m1",
-      "200 MedicationStatement/m1@2",
-    ],
-    [
-      "a record after its last version",
-      AFTER,
-      "MedicationStatement/m1",
-      "200 MedicationStatement/m1@2",
-    ],
-    [
-      "a record with no T",
-      undefined,
-      "MedicationStatement/m1",
-      "200 MedicationStatement/m1@2",
-    ],
-    ["a record deleted at T", AFTER, "Observation/o1", "410 deleted"],
-    [
-      "a search of what is present at T",
       T,
       "MedicationStatement?patient=p1",
       "200 searchset 1 [MedicationStatement/m1@1]",
     ],
+  ],
+  [
+    "omits a record deleted by the date",
+    [AFTER, "Observation?patient=p1", "200 searchset 1 [Observation/o2@1]"],
+  ],
+  [
+    "omits a record made after the date",
+    [T, "Condition?patient=p1", "200 searchset 0 []"],
+  ],
+];
+
+const VREAD: Row[] = [
+  [
+    "serves a version recorded by the date",
+    [T, `${M1_HISTORY}/1`, "200 MedicationStatement/m1@1"],
+  ],
+  [
+    "answers 404 for a version recorded after the date",
+    [T, `${M1_HISTORY}/2`, "404 not-found"],
+  ],
+  [
+    "answers 404 for a version the record never had",
+    [undefined, `${M1_HISTORY}/9`, "404 not-found"],
+  ],
+  [
+    "answers 410 for the version that is a deletion",
+    [AFTER, "Observation/o1/_history/2", "410 deleted"],
+  ],
+];
+
+const BOTH_VERSIONS =
+  "200 history 2 [MedicationStatement/m1@2, MedicationStatement/m1@1]";
+const NEW_VERSION = "200 history 1 [MedicationStatement/m1@2]";
+const OLD_VERSION = "200 history 1 [MedicationStatement/m1@1]";
+
+const HISTORY_OF_A_RECORD: Row[] = [
+  [
+    "lists the record's versions newest first",
+    [undefined, M1_HISTORY, BOTH_VERSIONS],
+  ],
+  [
+    "lists only the versions recorded by the date",
+    [T, M1_HISTORY, OLD_VERSION],
+  ],
+  [
+    "lists a deletion as an entry with no resource",
     [
-      "a search omits a record deleted at T",
-      AFTER,
-      "Observation?patient=p1",
-      "200 searchset 1 [Observation/o2@1]",
-    ],
-    [
-      "a search omits a record made after T",
-      T,
-      "Condition?patient=p1",
-      "200 searchset 0 []",
-    ],
-    [
-      "a vread of a version at T",
-      T,
-      "MedicationStatement/m1/_history/1",
-      "200 MedicationStatement/m1@1",
-    ],
-    [
-      "a vread of a version after T",
-      T,
-      "MedicationStatement/m1/_history/2",
-      "404 not-found",
-    ],
-    [
-      "a vread of an unknown version",
-      undefined,
-      "MedicationStatement/m1/_history/9",
-      "404 not-found",
-    ],
-    [
-      "a vread of a deletion",
-      AFTER,
-      "Observation/o1/_history/2",
-      "410 deleted",
-    ],
-    [
-      "a vread of another patient's record",
-      undefined,
-      "Condition/c2/_history/1",
-      "404 not-found",
-    ],
-    [
-      "a history, newest first",
-      undefined,
-      "MedicationStatement/m1/_history",
-      "200 history 2 [MedicationStatement/m1@2, MedicationStatement/m1@1]",
-    ],
-    [
-      "a history at T",
-      T,
-      "MedicationStatement/m1/_history",
-      "200 history 1 [MedicationStatement/m1@1]",
-    ],
-    [
-      "a history holding a deletion",
       undefined,
       "Observation/o1/_history",
       "200 history 2 [DELETE Observation/o1, Observation/o1@1]",
     ],
-    [
-      "a history since an instant",
-      undefined,
-      "MedicationStatement/m1/_history?_since=2024-01-01T00:00:00Z",
-      "200 history 1 [MedicationStatement/m1@2]",
-    ],
-    [
-      "a history since a date",
-      undefined,
-      "MedicationStatement/m1/_history?_since=2024-01-01",
-      "400 invalid",
-    ],
-    [
-      "a history since a time with no timezone",
-      undefined,
-      "MedicationStatement/m1/_history?_since=2024-01-01T00:00:00",
-      "400 invalid",
-    ],
-    [
-      "a history at a year in which both versions were current",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2024",
-      "200 history 2 [MedicationStatement/m1@2, MedicationStatement/m1@1]",
-    ],
-    [
-      "a history at a year before the change",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2023",
-      "200 history 1 [MedicationStatement/m1@1]",
-    ],
-    [
-      "a history at the instant of the change",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2024-04-15T16:00:00Z",
-      "200 history 1 [MedicationStatement/m1@2]",
-    ],
-    [
-      "a history at the second before the change",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2024-04-15T15:59:59Z",
-      "200 history 1 [MedicationStatement/m1@1]",
-    ],
-    [
-      "a history since the instant of the change",
-      undefined,
-      "MedicationStatement/m1/_history?_since=2024-04-15T16:00:00Z",
-      "200 history 1 [MedicationStatement/m1@2]",
-    ],
-    [
-      "a history at a year below 1000",
-      undefined,
-      "MedicationStatement/m1/_history?_at=0099",
-      "400 invalid",
-    ],
-    [
-      "a history at a day that is not one",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2023-02-29",
-      "400 invalid",
-    ],
-    [
-      "a history at a day after the change",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2024-04-16",
-      "200 history 1 [MedicationStatement/m1@2]",
-    ],
-    [
-      "a history with _at and _since",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2024&_since=2024-04-01T00:00:00Z",
-      "200 history 1 [MedicationStatement/m1@2]",
-    ],
-    [
-      "a history at a month that is not one",
-      undefined,
-      "MedicationStatement/m1/_history?_at=2024-13",
-      "400 invalid",
-    ],
-    [
-      "a history of a record absent at T",
-      T,
-      "Condition/c1/_history",
-      "404 not-found",
-    ],
-    ["a type's history", undefined, "Condition/_history", "404 not-supported"],
-    ["the system's history", undefined, "_history", "404 not-supported"],
-  ];
-  for (const [name, asOf, path, expected] of rows) {
-    assert.equal(await answered(await get(asOf, path)), expected, name);
-  }
+  ],
+];
 
-  const notSupported = await (await get(T, "Condition/_history")).json();
-  assert.equal(
-    notSupported.issue[0].diagnostics,
-    "A history is read for one record, as <type>/<id>/_history.",
-  );
+const HISTORY_ABSENT: Row[] = [
+  [
+    "answers 404 for a record that is not there on the date",
+    [T, "Condition/c1/_history", "404 not-found"],
+  ],
+];
 
-  const first = await (await get(T, "Observation?patient=p1&_count=1")).json();
-  assert.equal(first.total, 2);
-  const next: string = first.link.find(
-    (link: { relation: string }) => link.relation === "next",
-  ).url;
-  assert.ok(!next.includes("2024"), "T is never in a link");
-  assert.equal(
-    await answered(await get(T, next.slice(BASE.length + 1))),
-    "200 searchset 2 [Observation/o2@1]",
-  );
-});
+const HISTORY_OF_THE_HOSPITAL: Row[] = [
+  [
+    "answers 404 `not-supported` for the whole hospital's history",
+    [undefined, "_history", "404 not-supported"],
+  ],
+];
 
-test("a patient not at the hospital at T is not listed, cannot be picked, and their token and auto-approval are refused", async () => {
+const SINCE: Row[] = [
+  [
+    "returns the versions recorded at or after an instant",
+    [undefined, `${M1_HISTORY}?_since=2024-01-01T00:00:00Z`, NEW_VERSION],
+    [undefined, `${M1_HISTORY}?_since=${CHANGE}`, NEW_VERSION],
+  ],
+  [
+    "answers 400 for a value that is not an instant",
+    [undefined, `${M1_HISTORY}?_since=2024-01-01`, "400 invalid"],
+    [undefined, `${M1_HISTORY}?_since=2024-01-01T00:00:00`, "400 invalid"],
+  ],
+];
+
+const AT: Row[] = [
+  [
+    "returns every version current at some time in a year",
+    [undefined, `${M1_HISTORY}?_at=2024`, BOTH_VERSIONS],
+  ],
+  [
+    "returns the one version current through a year before the change",
+    [undefined, `${M1_HISTORY}?_at=2023`, OLD_VERSION],
+  ],
+  [
+    "returns the new version at the instant of the change",
+    [undefined, `${M1_HISTORY}?_at=${CHANGE}`, NEW_VERSION],
+  ],
+  [
+    "returns the old version one second before the change",
+    [undefined, `${M1_HISTORY}?_at=2024-04-15T15:59:59Z`, OLD_VERSION],
+  ],
+  [
+    "returns the version current on a day",
+    [undefined, `${M1_HISTORY}?_at=2024-04-16`, NEW_VERSION],
+  ],
+  [
+    "narrows the versions by `_since` too when both are given",
+    [
+      undefined,
+      `${M1_HISTORY}?_at=2024&_since=2024-04-01T00:00:00Z`,
+      NEW_VERSION,
+    ],
+  ],
+  [
+    "answers 400 for a date that does not exist",
+    [undefined, `${M1_HISTORY}?_at=0099`, "400 invalid"],
+    [undefined, `${M1_HISTORY}?_at=2023-02-29`, "400 invalid"],
+    [undefined, `${M1_HISTORY}?_at=2024-13`, "400 invalid"],
+  ],
+];
+
+/**
+ * Given `asOf`, the world's date, a hospital answers with its records as they stood then: each record's latest version
+ * recorded at or before it. A test pulls one patient at two dates and sees what changed between them.
+ */
+describe("Reading records as they stood on a date · asOf, recordsAt(), versionsOf()", () => {
+  let hospital: Hospital;
+  let base: string;
+  let token: string;
+
+  const options = (asOf?: string): DemoHospitalOptions => ({
+    hospital,
+    patients: PATIENTS,
+    ...(asOf === undefined ? {} : { asOf }),
+  });
+
+  const get = (asOf: string | undefined, path: string, bearer = token) =>
+    demoHospital(options(asOf))(
+      new Request(`${base}/${path}`, {
+        headers: { Authorization: `Bearer ${bearer}` },
+      }),
+    );
+
+  const tokenFor = async (patient: string, asOf?: string) =>
+    (await signInAs(options(asOf), patient)).token;
+
+  const signIn = () =>
+    new URLSearchParams({
+      response_type: "code",
+      client_id: "test-app",
+      redirect_uri: REDIRECT,
+      scope: "launch/patient patient/*.rs",
+      aud: base,
+      code_challenge: pkcePair().challenge,
+      code_challenge_method: "S256",
+    });
+
   const pageAt = async (asOf?: string) =>
     (
       await demoHospital(options(asOf))(
-        new Request(`${BASE}/authorize?${signIn()}`),
+        new Request(`${base}/authorize?${signIn()}`),
       )
     ).text();
-  const page = await pageAt(T);
-  assert.equal(
-    /<p class="as-of">[^<]*<time datetime="([^"]*)">1 February 2024<\/time>/.exec(
-      page,
-    )?.[1],
-    T,
-  );
-  assert.deepEqual(
-    [...page.matchAll(/<label class="choice">[^>]*> ([^<]*)<\/label>/g)].map(
-      ([, name]) => name,
-    ),
-    ["Brook, Ana", "Wick, Ana"],
-  );
-  const plain = await pageAt();
-  assert.ok(!plain.includes('class="as-of"'));
-  assert.ok(plain.includes("Corr, Ana"));
 
-  const picked = await demoHospital(options(T))(
-    new Request(`${BASE}/authorize`, {
-      method: "POST",
-      body: new URLSearchParams(`${signIn()}&patient=p3&decision=allow`),
-    }),
-  );
-  assert.equal(
-    new URL(picked.headers.get("Location") ?? "").searchParams.get("error"),
-    "access_denied",
-  );
-  const theirs = await tokenFor("p3");
-  assert.equal(
-    (await get(T, "Patient/p3", theirs)).status,
-    401,
-    "a token naming a patient not there at T",
-  );
-  assert.throws(() => demoHospital({ ...options(T), autoApprove: "p3" }));
+  const searchedByOne = async () =>
+    (await get(T, "Observation?patient=p1&_count=1")).json();
 
-  const deleted = await tokenFor("p4", undefined, "2022-01-01T00:00:00Z");
-  assert.equal(
-    (await get("2022-01-01T00:00:00Z", "Patient/p4", deleted)).status,
-    200,
-  );
-  assert.equal(
-    (await get(T, "Patient/p4", deleted)).status,
-    401,
-    "a token naming a patient deleted before T",
-  );
-  assert.throws(() => demoHospital({ ...options(T), autoApprove: "p4" }));
-});
+  const nextLink = (page: {
+    link: { relation: string; url: string }[];
+  }): string => page.link.find(({ relation }) => relation === "next")!.url;
 
-test("a record made again after its deletion is written in its history as a new one", async () => {
-  const body = await (
-    await get(undefined, "Observation/o4/_history", await tokenFor("p3"))
-  ).json();
-  assert.deepEqual(
-    body.entry.map(
-      ({ request }: Entry) => `${request?.method} ${request?.url}`,
-    ),
-    ["POST Observation", "DELETE Observation/o4", "POST Observation"],
-  );
-});
-
-test("a patient's export is a collection of each record's version at T, addressed as the hospital's own", () => {
-  const held = { hospital, patients: PATIENTS };
-  const at = (asOf?: string) => {
-    const collection = exportCollection(held, "p1", asOf);
-    assert.equal(collection.type, "collection");
-    return Object.fromEntries(
-      (collection.entry ?? []).map(({ fullUrl, resource }) => [
-        fullUrl,
-        resource?.resourceType === "MedicationStatement"
-          ? resource.status
-          : resource?.id,
-      ]),
-    );
+  /** Registers one leaf for each row, which asks its examples in turn. */
+  const leaves = (rows: Row[]) => {
+    for (const [title, ...examples] of rows)
+      it(title, async () => {
+        for (const [asOf, path, answer] of examples)
+          assert.equal(await answered(await get(asOf, path)), answer, path);
+      });
   };
-  assert.deepEqual(at(T), {
-    [`${BASE}/Patient/p1`]: "p1",
-    [`${BASE}/MedicationStatement/m1`]: "active",
-    [`${BASE}/Observation/o1`]: "o1",
-    [`${BASE}/Observation/o2`]: "o2",
+
+  before(async () => {
+    ({ hospital } = await loadHospital("cascade-north"));
+    base = hospital.fhirBase;
+    token = await tokenFor("p1");
   });
-  assert.deepEqual(at(), {
-    [`${BASE}/Patient/p1`]: "p1",
-    [`${BASE}/MedicationStatement/m1`]: "completed",
-    [`${BASE}/Observation/o2`]: "o2",
-    [`${BASE}/Condition/c1`]: "c1",
+
+  describe("when a record is read", () => {
+    leaves(READ);
   });
-});
 
-test("the hospital's scopes grant what SMART says each grants", async () => {
-  const rows: [string, string][] = [
-    ["patient/Observation.read", "Observation?patient=p1"],
-    ["patient/Observation.read", "Observation/o2"],
-    ["patient/*.*", "Observation/o2/_history"],
-    ["patient/Observation.s", "Observation?patient=p1"],
-  ];
-  for (const [scope, path] of rows) {
-    const response = await get(undefined, path, await tokenFor("p1", scope));
-    assert.equal(response.status, 200, `${scope} ${path}`);
-  }
-});
+  describe("when a patient's records are searched", () => {
+    leaves(SEARCH);
 
-test("bad data and a bad asOf are refused with a reason, by the hospital and by its loader", async (t) => {
-  const c1 = (at: string, versionId = "1") =>
-    version({ resourceType: "Condition", id: "c1" }, versionId, at);
-  const p1 = version(person("p1", "Wick"), "1", "2020-01-01T00:00:00Z");
-  const at = "2024-01-01T00:00:00Z";
-  const later = "2024-02-01T00:00:00Z";
-  type Editable = {
-    request: Record<string, unknown>;
-    response: Record<string, unknown>;
-    resource: { meta: Record<string, unknown> };
-  };
-  const edited = (entry: BundleEntry, change: (copy: Editable) => void) => {
-    const copy = structuredClone(entry);
-    change(copy as unknown as Editable);
-    return copy;
-  };
-  const rows: [string, Record<string, Bundle>, string, string?][] = [
-    [
-      "a searchset",
-      { p1: { resourceType: "Bundle", type: "searchset", entry: [p1] } },
-      "a patient file is a Bundle of type collection or history, not searchset",
-    ],
-    [
-      "a collection holding a record twice",
-      {
-        p1: {
-          resourceType: "Bundle",
-          type: "collection",
-          entry: [
-            { resource: person("p1", "Wick") },
-            { resource: person("p1", "Wick") },
-          ],
-        },
-      },
-      "a collection holds Patient/p1 twice",
-    ],
-    [
-      "a PATCH",
-      {
-        p1: history(
-          p1,
-          edited(c1(at), (e) => (e.request.method = "PATCH")),
-        ),
-      },
-      "a history entry has a request whose method is POST, PUT or DELETE",
-    ],
-    [
-      "a PUT to another record",
-      {
-        p1: history(
-          p1,
-          edited(c1(at, "2"), (e) => (e.request.url = "Condition/c9")),
-        ),
-      },
-      "request.url is not <type>/<id> of its resource",
-    ],
-    [
-      "a record time that is a date",
-      {
-        p1: history(
-          p1,
-          edited(c1(at), (e) => (e.response.lastModified = "2024-01-01")),
-        ),
-      },
-      "a history entry has a response whose lastModified is an instant",
-    ],
-    [
-      "a version with no versionId",
-      {
-        p1: history(
-          p1,
-          edited(c1(at), (e) => delete e.resource.meta.versionId),
-        ),
-      },
-      "Condition/c1 has a version with no meta.versionId",
-    ],
-    [
-      "a record time on 31 February",
-      {
-        p1: history(
-          p1,
-          edited(
-            c1(at),
-            (e) => (e.response.lastModified = "2024-02-31T00:00:00Z"),
-          ),
-        ),
-      },
-      "a history entry has a response whose lastModified is an instant",
-    ],
-    [
-      "a lastUpdated that is not the record time",
-      {
-        p1: history(
-          p1,
-          edited(c1(at), (e) => (e.resource.meta.lastUpdated = later)),
-        ),
-      },
-      "Condition/c1 version 1: meta.lastUpdated is not the entry's response.lastModified",
-    ],
-    [
-      "an etag of another version",
-      {
-        p1: history(
-          p1,
-          edited(c1(at), (e) => (e.response.etag = 'W/"2"')),
-        ),
-      },
-      'Condition/c1 version 1: the etag is not W/"1"',
-    ],
-    [
-      "a version id used twice",
-      { p1: history(p1, c1(at), c1(later)) },
-      "Condition/c1 reuses version 1",
-    ],
-    [
-      "two versions at one time",
-      { p1: history(p1, c1(at), c1(at, "2")) },
-      `Condition/c1 has two versions at ${at}`,
-    ],
-    [
-      "a deletion with no etag",
-      {
-        p1: history(
-          p1,
-          c1(at),
-          edited(
-            deletion("Condition/c1", "2", later),
-            (e) => delete e.response.etag,
-          ),
-        ),
-      },
-      "Condition/c1 is deleted with a resource, or with no etag",
-    ],
-    [
-      "a deletion with a resource",
-      {
-        p1: history(p1, c1(at), {
-          ...deletion("Condition/c1", "2", later),
-          resource: { resourceType: "Condition", id: "c1" },
-        }),
-      },
-      "Condition/c1 is deleted with a resource, or with no etag",
-    ],
-    [
-      "a deletion of a record that does not exist",
-      { p1: history(p1, deletion("Condition/c1", "1", at)) },
-      "Condition/c1 is deleted while it does not exist",
-    ],
-    [
-      "a fullUrl at another base",
-      {
-        p1: history(p1, {
-          ...c1(at),
-          fullUrl: "https://elsewhere.example/fhir/Condition/c1",
-        }),
-      },
-      `fullUrl https://elsewhere.example/fhir/Condition/c1 is not ${BASE}/Condition/c1`,
-    ],
-    [
-      "a record in two files",
-      {
-        p1: history(p1, c1(at)),
-        p2: history(version(person("p2", "Brook"), "1", at), c1(at)),
-      },
-      "Condition/c1 is in two patient files",
-      "patient p2",
-    ],
-    [
-      "a file named for another patient",
-      { p1: history(version(person("p9", "Wick"), "1", at)) },
-      "holds Patient p9, not p1",
-    ],
-  ];
-  const refused = (where: string, reason: string) => (error: unknown) =>
-    error instanceof HospitalDataError &&
-    error.where === where &&
-    error.reason === reason;
+    it("counts the records there on the date in `total`", async () => {
+      assert.equal((await searchedByOne()).total, 2);
+    });
 
-  const folder = await mkdtemp(join(tmpdir(), "demo-hospital-"));
-  t.after(() => rm(folder, { recursive: true, force: true }));
-  const roots = {
-    hospitals: [join(folder, "hospitals")],
-    people: [join(folder, "people")],
-  };
-  await mkdir(join(folder, "hospitals", "cascade-north"), { recursive: true });
-  await writeFile(
-    join(folder, "hospitals", "cascade-north", "hospital.json"),
-    JSON.stringify(hospital),
-  );
-  for (const [name, patients, reason, where = "patient p1"] of rows) {
-    assert.throws(
-      () => demoHospital({ hospital, patients }),
-      refused(where, reason),
-      name,
-    );
-    if (reason.startsWith("holds Patient")) continue;
-    await rm(roots.people[0]!, { recursive: true, force: true });
-    for (const [id, bundle] of Object.entries(patients)) {
-      const source = join(roots.people[0]!, id, "sources", "cascade-north");
-      await mkdir(source, { recursive: true });
-      await writeFile(join(source, "fhir.json"), JSON.stringify(bundle));
-      await writeFile(
-        join(roots.people[0]!, id, "person.json"),
-        JSON.stringify({
-          id,
-          name: { family: id === "p2" ? "Brook" : "Wick", given: ["Ana"] },
-          birthDate: "1970-01-01",
-          gender: "unknown",
+    it("keeps the date out of the link to the next page", async () => {
+      const link = new URL(nextLink(await searchedByOne()));
+      assert.ok(!link.searchParams.has("asOf"));
+      assert.ok(![...link.searchParams.values()].includes(T));
+    });
+
+    it("serves the next page as of the same date", async () => {
+      const next = nextLink(await searchedByOne());
+      assert.equal(
+        await answered(await get(T, next.slice(base.length + 1))),
+        "200 searchset 2 [Observation/o2@1]",
+      );
+    });
+  });
+
+  describe("when one version is read", () => {
+    leaves(VREAD);
+  });
+
+  describe("when a record's history is read", () => {
+    leaves(HISTORY_OF_A_RECORD);
+
+    it("lists a record made again after its deletion as made, not updated", async () => {
+      const body = await (
+        await get(undefined, "Observation/o4/_history", await tokenFor("p3"))
+      ).json();
+      assert.deepEqual(
+        body.entry.map(
+          ({ request }: Entry) => `${request?.method} ${request?.url}`,
+        ),
+        ["POST Observation", "DELETE Observation/o4", "POST Observation"],
+      );
+    });
+
+    leaves(HISTORY_ABSENT);
+
+    it("answers 404 `not-supported` for a type's history, saying how a history is read", async () => {
+      const response = await get(T, "Condition/_history");
+      assert.equal(response.status, 404);
+      const outcome = (await response.json()).issue[0];
+      assert.equal(outcome.code, "not-supported");
+      assert.equal(
+        outcome.diagnostics,
+        "A history is read for one record, as <type>/<id>/_history.",
+      );
+    });
+
+    leaves(HISTORY_OF_THE_HOSPITAL);
+  });
+
+  describe("with `_since`", () => {
+    leaves(SINCE);
+  });
+
+  describe("with `_at`", () => {
+    leaves(AT);
+  });
+
+  describe("when the sign-in page is shown", () => {
+    it("says the date the records stand at", async () => {
+      const page = await pageAt(T);
+      assert.equal(
+        /<p class="as-of">[^<]*<time datetime="([^"]*)">1 February 2024<\/time>/.exec(
+          page,
+        )?.[1],
+        T,
+      );
+    });
+
+    it("lists only the patients at the hospital on the date", async () => {
+      const page = await pageAt(T);
+      assert.deepEqual(
+        [
+          ...page.matchAll(/<label class="choice">[^>]*> ([^<]*)<\/label>/g),
+        ].map(([, name]) => name),
+        ["Brook, Ana", "Wick, Ana"],
+      );
+    });
+
+    it("shows no date and lists every patient when none is given", async () => {
+      const page = await pageAt();
+      assert.ok(!page.includes('class="as-of"'));
+      assert.ok(page.includes("Corr, Ana"));
+    });
+  });
+
+  describe("given a patient who is not at the hospital on the date", () => {
+    it("redirects with `access_denied` when that patient is picked", async () => {
+      const picked = await demoHospital(options(T))(
+        new Request(`${base}/authorize`, {
+          method: "POST",
+          body: new URLSearchParams(`${signIn()}&patient=p3&decision=allow`),
         }),
       );
-    }
-    const patient = where.slice("patient ".length);
-    await assert.rejects(
-      loadHospital("cascade-north", roots),
-      refused(`${patient}/sources/cascade-north/fhir.json`, reason),
-      name,
-    );
-  }
+      assert.equal(
+        new URL(picked.headers.get("Location") ?? "").searchParams.get("error"),
+        "access_denied",
+      );
+    });
 
-  for (const asOf of [
-    "2024-02-01",
-    "2024-02-01T00:00:00",
-    "soon",
-    "2024-02-30T00:00:00Z",
-    "0099-02-01T00:00:00Z",
-  ]) {
-    const reason = "asOf is an instant, as 2024-02-01T00:00:00Z";
-    assert.throws(
-      () => demoHospital(options(asOf)),
-      refused("asOf", reason),
-      asOf,
-    );
-    assert.throws(() => recordsAt(PATIENTS.p1!, asOf), refused("asOf", reason));
-    assert.throws(
-      () => exportCollection({ hospital, patients: PATIENTS }, "p1", asOf),
-      refused("asOf", reason),
-      asOf,
-    );
-  }
+    it("answers 401 for a token naming a patient made after the date", async () => {
+      const theirs = await tokenFor("p3");
+      assert.equal((await get(T, "Patient/p3", theirs)).status, 401);
+    });
 
-  const exportRows: [string, string, string | undefined, string][] = [
-    ["an unknown patient", "nobody", undefined, ""],
-    ["a Patient made after T", "p3", T, ` at ${T}`],
-    ["a Patient deleted, now", "p4", undefined, ""],
-    ["a Patient deleted, at T", "p4", T, ` at ${T}`],
-  ];
-  for (const [name, patient, asOf, at] of exportRows) {
-    assert.throws(
-      () => exportCollection({ hospital, patients: PATIENTS }, patient, asOf),
-      refused("patient", `${hospital.name} has no patient ${patient}${at}`),
-      name,
-    );
-  }
+    it("answers 401 for a token naming a patient deleted by the date", async () => {
+      const earlier = "2022-01-01T00:00:00Z";
+      const deleted = await tokenFor("p4", earlier);
+      assert.equal(
+        (await get(earlier, "Patient/p4", deleted)).status,
+        200,
+        "the token was good before the deletion",
+      );
+      assert.equal((await get(T, "Patient/p4", deleted)).status, 401);
+    });
+
+    it("throws for that patient as `autoApprove`", () => {
+      for (const patient of ["p3", "p4"])
+        assert.throws(
+          () => demoHospital({ ...options(T), autoApprove: patient }),
+          new RegExp(`has no patient ${patient} to auto-approve`),
+        );
+    });
+  });
+
+  describe("when `asOf` is not an instant", () => {
+    const refusing = (error: unknown) =>
+      error instanceof HospitalDataError &&
+      error.where === NOT_AN_INSTANT_REFUSAL.where &&
+      error.reason === NOT_AN_INSTANT_REFUSAL.reason;
+
+    it("throws `HospitalDataError` from `demoHospital()`", () => {
+      for (const asOf of NOT_AN_INSTANT)
+        assert.throws(() => demoHospital(options(asOf)), refusing, asOf);
+    });
+
+    it("throws `HospitalDataError` from `recordsAt()`", () => {
+      for (const asOf of NOT_AN_INSTANT)
+        assert.throws(() => recordsAt(PATIENTS.p1!, asOf), refusing, asOf);
+    });
+  });
+
+  describe("recordsAt(bundle, asOf)", () => {
+    const named = (asOf?: string) =>
+      recordsAt(PATIENTS.p1!, asOf).map((resource) =>
+        resource.resourceType === "MedicationStatement"
+          ? `${resource.resourceType}/${resource.id} ${resource.status}`
+          : `${resource.resourceType}/${resource.id}`,
+      );
+
+    it("returns each record of a patient file as it stood at `asOf`", () => {
+      assert.deepEqual(named(T).sort(), [
+        "MedicationStatement/m1 active",
+        "Observation/o1",
+        "Observation/o2",
+        "Patient/p1",
+      ]);
+      assert.deepEqual(named().sort(), [
+        "Condition/c1",
+        "MedicationStatement/m1 completed",
+        "Observation/o2",
+        "Patient/p1",
+      ]);
+    });
+  });
+
+  describe("versionsOf(bundle, where)", () => {
+    it("returns each record's versions in order of record time", () => {
+      const records = versionsOf(PATIENTS.p1!, "p1");
+      assert.deepEqual(
+        records.get(M1)?.map(({ versionId }) => versionId),
+        ["1", "2"],
+        "although the file lists version 2 first",
+      );
+      const observation = records.get("Observation/o1")!;
+      assert.deepEqual(
+        observation.map(({ versionId }) => versionId),
+        ["1", "2"],
+      );
+      assert.equal(observation[1]?.resource, undefined, "a deletion");
+    });
+  });
 });

@@ -23,10 +23,49 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - uses: actions/checkout@v7
+        with:
+          repository: jayostis/cascade-runtime-js
+          ref: main
+          path: .runtime-js
+          sparse-checkout: |
+            scripts
+            packages/site/src
+          persist-credentials: false
+      - run: npm run build:test
+      - run: mkdir -p report
+      - run: >-
+          node --test
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=./.runtime-js/scripts/junit-reporter.mjs --test-reporter-destination=report/junit.xml
+          "dist/test/**/*.test.js"
+      - if: ${{ !cancelled() }}
+        run: node .runtime-js/scripts/spec-shape.mjs report/junit.xml test/spec.json
+      - if: ${{ !cancelled() }}
+        run: cp test/spec.json report/spec.json
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-tests
+          path: report/
+          if-no-files-found: error
+
+  # The package declares node >= 22; the report job runs on 24, where node:test names each test's file and line.
+  node-22:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
       - run: npm test
 
   people:

@@ -22,8 +22,7 @@ FHIR R4, RESTful API, [read, vread and history](https://hl7.org/fhir/R4/http.htm
 has no parameter for reading a server as of a date; T is the world's date of a pretend hospital, the time of its story
 at which an app connects, and every answer is the one a real server would have given then.
 
-Pinned by `history.test.ts`, "the hospital answers each read, search, vread and history with its records as they stood
-at T".
+Pinned by `history.test.ts`, every leaf of "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()".
 
 ## The three clocks
 
@@ -37,7 +36,8 @@ Three times are in play, and "as of" names only the first.
 
 "As of" is never clinical time: a record dated before T is still absent at T when the source recorded it after T.
 
-Pinned by `history.test.ts`, "a patient's export is a collection of each record's version at T".
+Pinned by `export.test.ts`, "Exporting a patient's records as a file · exportCollection()" › exportCollection(hospital, patient, asOf) › "returns each record's version
+current at `asOf`, a deleted record left out".
 
 ## Scopes
 
@@ -57,8 +57,8 @@ read 2026-10-16. Query scopes ("add a query string suffix to existing scopes, st
 a server and are partly "experimental"; granting nothing for them refuses rather than over-shares. The hospital
 serves only patients, so `user/` and `system/` scopes have nothing to grant.
 
-Pinned by `history.test.ts`, "the hospital's scopes grant what SMART says each grants", and the scope rows of
-`hospital.test.ts`, "each bad request is refused as the protocol says".
+Pinned by `hospital.test.ts`, "Reading a patient's records from a demo hospital · demoHospital()" › given a token's scopes: the three leaves that serve under a scope and the
+three that answer 403.
 
 ## Not yours is not there
 
@@ -70,8 +70,8 @@ same body. A search naming another patient is a 403 whether that patient exists 
 
 FHIR R4, Security, [Access Denied Response Handling](https://hl7.org/fhir/R4/security.html), read 2026-10-16.
 
-Pinned by `history.test.ts` ("another patient's … answers as an unknown one") and the rows "another patient's record",
-"another patient's version" and "another patient's history" of `hospital.test.ts`.
+Pinned by `hospital.test.ts`, "Reading a patient's records from a demo hospital · demoHospital()" › when a request is refused: "answers 404 `not-found` for another patient's
+record", "… for a version of another patient's record" and "… for the history of another patient's record".
 
 ## 410 for a deleted record
 
@@ -85,7 +85,8 @@ The patient's own record deleted at T answers a read with 410 `deleted`; a vread
 FHIR R4, RESTful API, [read](https://hl7.org/fhir/R4/http.html#read) and [vread](https://hl7.org/fhir/R4/http.html#vread),
 read 2026-10-16.
 
-Pinned by `history.test.ts`, rows "a record deleted at T" and "a vread of a deletion".
+Pinned by `history.test.ts`, "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()" › when a record is read › "answers 410 for a record deleted by the date", and
+› when one version is read › "answers 410 for the version that is a deletion".
 
 ## `aud` is one URL
 
@@ -101,7 +102,8 @@ strings", [RFC 7519 §4.1.3](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.
 imaging one, which name each service a token is good for. It was not adopted: the authorize parameter is one URL, and
 this hospital's tokens are opaque signed notes with no `aud` claim.
 
-Pinned by `hospital.test.ts`, row "a wrong aud".
+Pinned by `hospital.test.ts`, "Signing a patient in to a demo hospital · demoHospital()" › when the authorize request is wrong › "redirects with `invalid_request` for an
+`aud` that is another hospital's FHIR base".
 
 ## Plain records are served as written
 
@@ -118,7 +120,8 @@ does not make, and a later edit of a hand-written file would keep the same `"1"`
 miss it.
 
 Pinned by `cascade-runtime`'s `connect.test.ts` (every pulled resource deep-equals the file's) and
-`hospital.test.ts`, "a client walks the whole protocol for patient A at North".
+`hospital.test.ts`, "Reading a patient's records from a demo hospital · demoHospital()" › when a client searches a patient's records › "returns every record of the patient across
+its searches and the read of the Patient".
 
 ## History is newest first
 
@@ -130,8 +133,9 @@ deletion as an entry with `request.method` `DELETE` and no `resource`. Type-leve
 
 FHIR R4, RESTful API, [history](https://hl7.org/fhir/R4/http.html#history), read 2026-10-16.
 
-Pinned by `history.test.ts`, rows "a history, newest first", "a history holding a deletion", "a type's history" and
-"the system's history".
+Pinned by `history.test.ts`, "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()" › when a record's history is read: "lists the record's versions newest first",
+"lists a deletion as an entry with no resource", "answers 404 `not-supported` for a type's history, saying how a history
+is read" and "… for the whole hospital's history".
 
 ## `_at` at the value's precision
 
@@ -144,8 +148,9 @@ day (UTC); an instant during that second. A version is current from its record t
 FHIR R4, Search, [date](https://hl7.org/fhir/R4/search.html#date), read 2026-10-16; `_at` refers to it for date
 handling. `_since` is an instant, and one with no timezone is a 400 `invalid`.
 
-Pinned by `history.test.ts`, rows "a history at a year in which both versions were current", "a history at a year
-before the change", "a history at a day after the change" and "a history since a time with no timezone".
+Pinned by `history.test.ts`, "Reading records as they stood on a date · asOf, recordsAt(), versionsOf()" › with `_at`: "returns every version current at some time in a year", "returns the
+one version current through a year before the change" and "returns the version current on a day"; › with `_since`:
+"answers 400 for a value that is not an instant".
 
 ## Error switches follow smart-launcher-v2
 
@@ -175,8 +180,7 @@ Also ours: the 401 carries `WWW-Authenticate: Bearer error="invalid_token"` (RFC
 `error_description="The access token expired"` for the expired switch, so a client can tell the two apart without
 reading prose; and the body is an OperationOutcome, as every FHIR error here is, not the launcher's plain text.
 
-Pinned by `hospital.test.ts`, "each error switch fails at its own step, as smart-launcher-v2 does, and an unknown one is
-refused".
+Pinned by `hospital.test.ts`, every leaf of "Making a sign-in or a request fail on purpose · simulate_error".
 
 ## A direct caller gets the hospital at the base it asked
 
@@ -206,9 +210,8 @@ also conveyed in a server's CapabilityStatement" in earlier versions and that "t
 extension is kept for clients and test kits written against SMART 1.0, and `.well-known/smart-configuration` stays the
 source.
 
-Pinned by `serve.test.ts`, "a caller with only the listener's address discovers, signs in, searches and pages, every
-link at the listener", "a direct sign-in takes the base it came to as aud, and refuses the hospital's own" and "a direct
-caller gets the hospital at the host it asked".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when a caller has only the listener's address (its six leaves), and › when the
+listener is asked by another name: "answers at `localhost`, naming it as the issuer".
 
 ## The listener answers only the names it was given
 
@@ -229,8 +232,7 @@ rebinding and other Host header attacks") and Django with
 [`ALLOWED_HOSTS`](https://docs.djangoproject.com/en/5.2/ref/settings/). `host.docker.internal` is allowed with no option
 because I1's Inferno reaches the listener from a container under that name; the CLI prints each base at it.
 
-Pinned by `serve.test.ts`, "a request the listener cannot place, or whose Host it does not answer, is refused, each for
-its reason".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when the listener is asked by another name and › when a request cannot be placed.
 
 ## The world's date is moved only by a caller that is not a page on another site
 
@@ -247,8 +249,9 @@ Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery
 2026-10-17, which also gives verifying `Origin` against the target's origin; [Fetch
 Metadata](https://www.w3.org/TR/fetch-metadata/) defines the header.
 
-Pinned by `serve.test.ts`, "a POST to the listener's world-date moves the world's date for the next answer, and refuses
-what is not an instant or comes from another site".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when the world's date is moved: "answers the next request as of the date posted to
+`/world-date`", "answers 400 for an `asOf` that is not an instant, leaving the date" and "answers 403 for a post from a
+page on another site, leaving the date".
 
 ## A browser app may call discovery, the token endpoint and the API from any origin
 
@@ -272,5 +275,4 @@ documented there. `Pragma: no-cache` is [RFC 6749 §5.1](https://www.rfc-editor.
 token response for `Cache-Control: no-store` and `Pragma: no-cache`. I1's Inferno run found the missing headers
 (`epic-people/i1-inferno.md`).
 
-Pinned by `serve.test.ts`, "a browser app may read discovery, the token endpoint and the API from any origin, and the sign-in
-page and world-date from none".
+Pinned by `serve.test.ts`, "Serving the demo hospitals at a real address · serveDemo(), demoRemapFetch()" › when a page on another origin asks (its six leaves).
