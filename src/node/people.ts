@@ -63,6 +63,14 @@ const GRADES = ["certain", "probable", "possible", "certainly-not"];
 
 const RULE = "a source holds fhir.json and ccda/<day>.xml";
 
+const isDate = (value: unknown): value is string => {
+  if (typeof value !== "string" || !DATE.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const written = new Date(0);
+  written.setUTCFullYear(year!, month! - 1, day!);
+  return written.getUTCMonth() === month! - 1 && written.getUTCDate() === day;
+};
+
 export const isName = (value: unknown): value is PersonName =>
   isObject(value) &&
   typeof value.family === "string" &&
@@ -92,11 +100,7 @@ const REQUIRED: [Field | "id", (value: unknown) => boolean, string][] = [
     isName,
     "an object of family, a string, and given, a list of one or more strings",
   ],
-  [
-    "birthDate",
-    (value) => typeof value === "string" && DATE.test(value),
-    "a date as YYYY-MM-DD",
-  ],
+  ["birthDate", isDate, "a date as YYYY-MM-DD"],
   [
     "gender",
     (value) => GENDERS.includes(value as string),
