@@ -52,6 +52,7 @@ const NOT_AN_INSTANT = [
   "soon",
   "2024-02-30T00:00:00Z",
   "0099-02-01T00:00:00Z",
+  "2021-12-31T23:59:60Z",
 ];
 
 const NOT_AN_INSTANT_REFUSAL = {
