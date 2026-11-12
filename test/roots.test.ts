@@ -583,6 +583,16 @@ describe("Loading hospitals and people from an app's own folders · loadHospital
         "hedda-quill/person.json: has no birthDate, a date as YYYY-MM-DD",
       ],
       [
+        "refuses a `birthDate` of a month that does not exist",
+        async () => [await personRoot({ ...HEDDA, birthDate: "2021-13-45" })],
+        "hedda-quill/person.json: has no birthDate, a date as YYYY-MM-DD",
+      ],
+      [
+        "refuses a `birthDate` of a day the month does not have",
+        async () => [await personRoot({ ...HEDDA, birthDate: "2021-02-30" })],
+        "hedda-quill/person.json: has no birthDate, a date as YYYY-MM-DD",
+      ],
+      [
         "refuses a `gender` that is not one of FHIR's four",
         async () => [await personRoot({ ...HEDDA, gender: "F" })],
         "hedda-quill/person.json: has no gender, male, female, other or unknown",
